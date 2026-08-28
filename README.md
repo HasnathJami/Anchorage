@@ -53,14 +53,15 @@ Anchorage/
 │           ├── common/          #   Outcome<T>, AppError taxonomy, dispatchers
 │           └── designsystem/    #   colour/type/shape tokens + shared composables
 │
-├── flutter/                     # Task 2 — Anchorage Harbor
+├── flutter/                     # Task 2 — Anchorage Harbor (same layers, Dart idiom)
 │   └── lib/
-│       ├── app/                 #   shell, routes, theme extensions
+│       ├── app/                 #   shell, routes
+│       ├── di/                  #   get_it composition root
 │       ├── background/          #   WorkManager isolate entry point
-│       ├── core/                #   Failure taxonomy, Result<T>, DI, permissions
-│       └── features/
-│           ├── capture/         #   domain / data / presentation
-│           └── sync/            #   domain / data / presentation
+│       ├── presentation/        #   capture/ and sync/: Blocs, pages, widgets
+│       ├── domain/              #   entities, policies, ports, use cases  (no plugins)
+│       ├── data/                #   camera, SQLite queue, connectivity, schedulers
+│       └── core/                #   Failure taxonomy, Result<T>, design tokens
 │
 ├── docs/                        # feature-by-feature and cross-cutting documentation
 ├── design/                      # reference screenshots from the brief
@@ -354,15 +355,15 @@ over pure domain code, with fakes standing in for hardware.
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
-| `flutter` | 78 | Sync engine (22), sync domain (19), camera Bloc (18), upload manager Bloc (9), formatters (10) |
-| **Total** | **180** | |
+| `flutter` | 98 | Sync engine (22), camera Bloc incl. flash (27), sync domain (19), formatters (10), upload manager Bloc (9), flash policy (7), architecture (4) |
+| **Total** | **200** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
 cd android  && ./gradlew test        # 102 tests
-cd ../flutter && flutter test        # 78 tests
+cd ../flutter && flutter test        # 98 tests
 ```
 
 Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.

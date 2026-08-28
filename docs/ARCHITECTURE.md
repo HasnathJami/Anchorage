@@ -124,35 +124,54 @@ waiting to be drawn.
 
 ---
 
-## 4. Flutter structure
+## 4. Directory graph (Flutter)
 
-Flutter has no compiler-level module boundary, so the same doctrine is expressed by directory
-convention and enforced by review:
+The same layer-first shape as Perimeter, in Dart's idiom. Capture and sync are two *features*
+sharing one set of layers, exactly as attendance and history do on Android — they are folders
+under `presentation/`, not parallel copies of the whole stack.
 
 ```
 lib/
-├── app/                 shell, routes, theme extensions
-├── background/          WorkManager isolate entry point
-├── core/
-│   ├── di/              composition root (get_it)
-│   ├── error/           Failure taxonomy
-│   ├── permissions/     PermissionGateway port + implementation
-│   ├── result/          Result<T>
-│   └── utils/           Formatters
-└── features/
-    ├── capture/
-    │   ├── domain/      entities · services (ports) · repositories
-    │   ├── data/        datasources · repositories
-    │   └── presentation/ bloc · pages · widgets
-    └── sync/
-        ├── domain/
-        ├── data/
-        └── presentation/
+├── main.dart · app/         shell, routes            the composition root
+├── di/                      injector (get_it)
+├── background/              WorkManager isolate entry point
+├── presentation/  ──┐
+│   ├── capture/     │       CameraBloc · pages · widgets
+│   └── sync/        │       UploadManagerBloc · pages · widgets
+│                    ├──►  domain/   ◄──┐
+├── data/  ──────────┘     ├── entities/│  UploadTask · CameraLens · RetryPolicy
+│   ├── datasources/       │            │  FlashPolicy · LinkQuality
+│   ├── models/            ├── services/│  ports: CameraPort · UploaderPort
+│   ├── repositories/      │            │         ConnectivityPort · PermissionGateway
+│   └── services/  ────────┼── repositories/
+│                          └── usecases/   ProcessUploadQueue · EnqueueBatch
+└── core/
+    ├── designsystem/      HarborColors · HarborTypography · HarborTheme
+    ├── error/             Failure taxonomy
+    ├── result/            Result<T>
+    └── utils/             Formatters
 ```
 
-The import rule: **nothing under `domain/` may import `package:flutter/...` or any plugin.**
-`camera`, `sqflite`, `connectivity_plus`, `workmanager` and `permission_handler` appear only
-under `data/` and `core/permissions/`.
+Dart has **no** module boundary at all — `lib/` is one library and any file may import any
+other — so this doctrine used to be "enforced by review", which is another way of saying
+enforced on whoever happens to be reading. It is enforced by `test/architecture/` now, the
+mirror of Perimeter's `ArchitectureTest`:
+
+* **`domain/` may import only `dart:`, Equatable, and the `Failure`/`Result` types.** An
+  allowlist rather than a denylist, because the innermost ring is the one place where a new
+  plugin sneaking in must be impossible rather than merely unlikely — a denylist only catches
+  the plugins someone thought to name. `camera`, `sqflite`, `connectivity_plus`,
+  `workmanager`, `permission_handler` and `package:flutter` itself appear only outside it.
+* **`data/` never reaches up into `presentation/` or `app/`.**
+* **`presentation/` never reaches down into `data/`**, apart from two seams listed by name in
+  the test: the camera page needs the plugin's own `CameraController` to hand to
+  `CameraPreview` (the widget *is* the adapter), and the upload page drives `MockUploadApi`'s
+  canned-response switcher. Naming them means a third cannot appear quietly.
+
+Splitting `PermissionGateway` was part of this: the port now sits in `domain/services/` and
+its `permission_handler` implementation in `data/services/`. They were one file, which meant
+the plugin import travelled with the interface into every consumer — the exact coupling the
+port exists to prevent.
 
 ---
 

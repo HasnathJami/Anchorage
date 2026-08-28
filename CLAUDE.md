@@ -48,7 +48,7 @@ cd flutter
 flutter pub get
 flutter analyze                      # must be clean; it currently is
 flutter test                         # all unit / bloc tests
-flutter test test/features/sync/     # one area
+flutter test test/domain/            # one layer
 flutter build apk --release
 ```
 
@@ -82,6 +82,14 @@ source tree` case** — that one exists so the other five cannot pass vacuously 
 moves. This used to be a compiler invariant (`:core:domain` and `:core:common` were plain
 `kotlin-jvm` modules that physically could not see the Android SDK); the single-module layout
 traded that for one readable build file, and the test is what is holding the line now.
+
+**Flutter is the same shape and the same guard.** `lib/` is layer-first too — `presentation/`
+(with `capture/` and `sync/` inside it), `domain/`, `data/`, `core/`, `di/` — and
+`test/architecture/architecture_test.dart` enforces it. There, `domain/` is on an import
+**allowlist** (`dart:`, Equatable, `core/error/`, `core/result/`) rather than a denylist,
+because Dart has no module boundary whatsoever and a denylist only catches the plugins someone
+thought to name. Two presentation→data seams are grandfathered by name in that test; do not
+add a third without writing down why.
 
 ### 2. Business rules live in the domain, never in a ViewModel or Bloc
 
@@ -165,7 +173,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **102 Android unit tests**, **78 Flutter tests**, plus 5 Compose instrumentation
+Current state: **102 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

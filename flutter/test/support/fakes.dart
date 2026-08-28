@@ -1,15 +1,15 @@
 import 'dart:async';
 
 import 'package:anchorage_harbor/core/error/failure.dart';
-import 'package:anchorage_harbor/core/permissions/permission_gateway.dart';
+import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
-import 'package:anchorage_harbor/features/capture/domain/entities/camera_lens.dart';
-import 'package:anchorage_harbor/features/capture/domain/entities/capture_batch.dart';
-import 'package:anchorage_harbor/features/capture/domain/services/camera_port.dart';
-import 'package:anchorage_harbor/features/sync/domain/entities/link_quality.dart';
-import 'package:anchorage_harbor/features/sync/domain/entities/upload_task.dart';
-import 'package:anchorage_harbor/features/sync/domain/repositories/upload_queue_repository.dart';
-import 'package:anchorage_harbor/features/sync/domain/services/sync_ports.dart';
+import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/services/camera_port.dart';
+import 'package:anchorage_harbor/domain/entities/link_quality.dart';
+import 'package:anchorage_harbor/domain/entities/upload_task.dart';
+import 'package:anchorage_harbor/domain/repositories/upload_queue_repository.dart';
+import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 
 /// Hand-written fakes rather than generated mocks.
 ///
@@ -372,6 +372,14 @@ class FakeCamera implements CameraPort {
   Failure? captureFailure;
   Failure? zoomFailure;
 
+  /// Set to simulate a sensor with no LED (see [FlashUnavailableFailure]).
+  Failure? flashFailure;
+
+  /// Every mode the Bloc has pushed at the hardware, in order. A fake rather
+  /// than a mock precisely so tests can assert on *what the camera ended up
+  /// set to*, not merely that a method was called.
+  final List<CaptureFlashMode> flashCalls = <CaptureFlashMode>[];
+
   CameraSession session = sessionFor(wideLens);
 
   int initialiseCount = 0;
@@ -405,8 +413,12 @@ class FakeCamera implements CameraPort {
   }
 
   @override
-  Future<Result<void>> setFlashMode(CaptureFlashMode mode) async =>
-      const Result<void>.success(null);
+  Future<Result<void>> setFlashMode(CaptureFlashMode mode) async {
+    flashCalls.add(mode);
+    final Failure? failure = flashFailure;
+    if (failure != null) return Result<void>.failure(failure);
+    return const Result<void>.success(null);
+  }
 
   @override
   Future<Result<void>> focusAt(FocusPoint point) async {

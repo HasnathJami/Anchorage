@@ -1,7 +1,7 @@
-import 'package:anchorage_harbor/core/di/injector.dart';
-import 'package:anchorage_harbor/features/sync/data/services/connectivity_monitor.dart';
-import 'package:anchorage_harbor/features/sync/data/services/workmanager_scheduler.dart';
-import 'package:anchorage_harbor/features/sync/domain/usecases/process_upload_queue.dart';
+import 'package:anchorage_harbor/di/injector.dart';
+import 'package:anchorage_harbor/data/services/connectivity_monitor.dart';
+import 'package:anchorage_harbor/data/services/workmanager_scheduler.dart';
+import 'package:anchorage_harbor/domain/usecases/process_upload_queue.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 

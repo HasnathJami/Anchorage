@@ -1,14 +1,14 @@
-import 'package:anchorage_harbor/app/theme/harbor_theme.dart';
-import 'package:anchorage_harbor/core/di/injector.dart';
-import 'package:anchorage_harbor/core/permissions/permission_gateway.dart';
-import 'package:anchorage_harbor/features/capture/domain/services/camera_port.dart';
-import 'package:anchorage_harbor/features/capture/presentation/bloc/camera_bloc.dart';
-import 'package:anchorage_harbor/features/capture/presentation/pages/camera_preview_page.dart';
-import 'package:anchorage_harbor/features/sync/domain/services/sync_ports.dart';
-import 'package:anchorage_harbor/features/sync/domain/usecases/process_upload_queue.dart';
-import 'package:anchorage_harbor/features/sync/domain/usecases/sync_use_cases.dart';
-import 'package:anchorage_harbor/features/sync/presentation/bloc/upload_manager_bloc.dart';
-import 'package:anchorage_harbor/features/sync/presentation/pages/upload_manager_page.dart';
+import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
+import 'package:anchorage_harbor/di/injector.dart';
+import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
+import 'package:anchorage_harbor/domain/services/camera_port.dart';
+import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
+import 'package:anchorage_harbor/presentation/capture/pages/camera_preview_page.dart';
+import 'package:anchorage_harbor/domain/services/sync_ports.dart';
+import 'package:anchorage_harbor/domain/usecases/process_upload_queue.dart';
+import 'package:anchorage_harbor/domain/usecases/sync_use_cases.dart';
+import 'package:anchorage_harbor/presentation/sync/bloc/upload_manager_bloc.dart';
+import 'package:anchorage_harbor/presentation/sync/pages/upload_manager_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 

@@ -1,6 +1,6 @@
 # Testing
 
-**180 unit tests** across both applications, plus 5 Compose instrumentation tests. All of them
+**200 unit tests** across both applications, plus 5 Compose instrumentation tests. All of them
 run without a device.
 
 ---
@@ -8,7 +8,8 @@ run without a device.
 ## 1. Strategy
 
 **Test where the logic lives.** Business rules were deliberately pushed into pure
-domain code — plain JVM modules on Android, plugin-free `domain/` directories on Flutter — so
+domain code — a framework-free `domain/` package on Android, a plugin-free `domain/` layer on
+Flutter, each guarded by an architecture test — so
 the interesting behaviour is testable in milliseconds without an emulator, Robolectric, or a
 `TestInstrumentationRunner`. Fast tests get run; slow tests get skipped.
 
@@ -52,15 +53,17 @@ for 9 a.m.
 | `presentation/attendance/` | 25 | MVI reduction and projection, permission escalation, every action path, concurrency guard (18); formatters incl. timezone (7) |
 | `architecture/` | 6 | The dependency rule itself: domain imports no framework and no outer layer, `core/common/` stays pure, presentation never reaches into data, data never reaches into presentation — plus one test asserting the source walk is not empty, so the other five cannot pass vacuously |
 
-### Anchorage Harbor — 78 tests
+### Anchorage Harbor — 98 tests
 
 | File | Tests | Focus |
 | --- | --- | --- |
 | `process_upload_queue_test.dart` | 22 | The sync engine, grouped by its five rules |
 | `sync_domain_test.dart` | 19 | Retry policy, task state predicates, byte-weighted progress, failure retryability |
-| `camera_bloc_test.dart` | 18 | Startup/permissions, lifecycle, zoom, focus, capture, batching, lens selection |
-| `upload_manager_bloc_test.dart` | 9 | Queue projection, auto-resume on stable link, pause/resume, retry, discard, clear |
+| `camera_bloc_test.dart` | 27 | Startup/permissions, lifecycle, zoom, focus, capture, batching, lens selection, flash |
 | `formatters_test.dart` | 10 | Byte units, throughput, zoom labels, middle-truncated file names |
+| `upload_manager_bloc_test.dart` | 9 | Queue projection, auto-resume on stable link, pause/resume, retry, discard, clear |
+| `flash_policy_test.dart` | 7 | The flash cycle reaching the torch, continuous-draw predicate, what survives an interruption, the torch deadline |
+| `architecture_test.dart` | 4 | The dependency rule: domain on an import allowlist, data ⊘ presentation, presentation ⊘ data (two named seams), plus a scan-reach test |
 
 ### Instrumentation — 5 tests
 
@@ -97,7 +100,7 @@ installDebug` before driving the app by hand again.
 
 ## 3. The test doubles
 
-Every port has a hand-written fake. This table *is* the reason 180 tests run without hardware.
+Every port has a hand-written fake. This table *is* the reason 200 tests run without hardware.
 
 | Port | Fake | Notable capability |
 | --- | --- | --- |
@@ -106,7 +109,7 @@ Every port has a hand-written fake. This table *is* the reason 180 tests run wit
 | `AttendanceRepository` | `FakeAttendanceRepository` | Timezone-aware date bucketing, injectable append failure |
 | `TimeProvider` | `FixedTimeProvider` / `MutableTimeProvider` | Move the clock mid-test to cross the window or a date boundary |
 | `IdGenerator` | `SequentialIdGenerator` | Assert on `record-1` |
-| `CameraPort` | `FakeCamera` | Injectable failures per operation; records zoom, focus and lens calls |
+| `CameraPort` | `FakeCamera` | Injectable failures per operation; records zoom, focus, lens and flash calls |
 | `PermissionGateway` | `FakePermissionGateway` | Separate current status from request result — the only way to model "denied now, granted after asking" |
 | `UploadQueueRepository` | `FakeUploadQueueRepository` | Full in-memory implementation with the same transition rules as SQLite |
 | `UploaderPort` | `FakeUploader` | **Scripted per task id** — "fail 503, then timeout, then succeed" is one line |
@@ -200,12 +203,12 @@ open app/build/reports/tests/testDebugUnitTest/index.html
 ```
 
 ```bash
-# Flutter — 78 tests
+# Flutter — 98 tests
 cd flutter
 flutter test
 
 # one area
-flutter test test/features/sync/
+flutter test test/domain/
 
 # with coverage
 flutter test --coverage

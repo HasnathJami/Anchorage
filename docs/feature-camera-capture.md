@@ -105,6 +105,53 @@ platform camera apps the user already knows.
 
 ---
 
+## 3a. Flash — and why it needs a policy object
+
+The flash button cycles **off → auto → always → torch**, and the order is not arbitrary: the
+torch is the only mode whose cost continues after the user stops interacting, so it sits one
+press before off rather than somewhere a thumb lands on the way past.
+
+All of it lives in `FlashPolicy`, in the domain, because the previous version lived in the
+Bloc's toggle handler as a `const List` and carried three defects nobody could see:
+
+| Defect | Cause | Symptom |
+| --- | --- | --- |
+| The torch was unreachable | The cycle stopped at `always` | "The flashlight doesn't work" — there was no way to switch it on |
+| A chosen mode reverted to off | Flash lived on `CameraSettings`, which lives on the session, which is destroyed on every lens switch and pause | Set "always", tap `0.5x`, flash is off again with no indication |
+| A fresh controller was never told | A new `CameraController` defaults to `auto`, not to the last one's mode | Hardware firing a flash behind a button reading "off" |
+
+The fix is one sentence: **the flash is a user preference, not a session property.** It lives
+on `CameraState`, survives every controller that dies under it, and is re-applied explicitly
+after every open — including when the chosen mode is `off`, because "off" is a value the
+hardware has to be told.
+
+### The battery rules
+
+The torch is the largest continuous draw this screen can create — on most phones larger than
+the sensor and the preview combined. Two rules follow, both in `FlashPolicy`:
+
+* **It never survives an interruption.** Pausing disposes the controller, so the LED is
+  already dark; recording that in the state is what stops it coming back lit on resume. Every
+  *other* mode is restored exactly as it was — over-correcting into "reset everything" would
+  just be the reverting-flash bug wearing a hat.
+* **It has a deadline.** Two idle minutes and the torch switches itself off, announced in a
+  snackbar rather than done silently: a light going out on its own is confusing unless the app
+  says it was deliberate. The deadline is a cancellable `Timer`, not an awaited delay — the
+  flash handler is `sequential`, so awaiting a two-minute timeout inside it would stall every
+  other sequential event behind it.
+
+### Sensors with no flash
+
+The `camera` plugin offers no way to *ask* whether a sensor has an LED, and assuming "front
+camera means no flash" would disable a working feature on the phones that have one. So the
+mode is attempted, and the platform's `setFlashModeFailed` is translated into
+`FlashUnavailableFailure` — a case of its own, because "the camera could not complete that
+action" invites a retry, and no amount of retrying will fit an LED to a sensor that shipped
+without one. The app says *"This camera has no flash"*, falls back to off, and leaves the
+preview running.
+
+---
+
 ## 4. Lifecycle — the bug this feature is really about
 
 Android hands the camera to whichever app asked most recently. An app that holds the sensor
@@ -223,5 +270,5 @@ ceremony. The *logic* stays behind the port; only the pixels reach through.
 | lens selection | switching re-opens and bumps `previewKey`; front camera excluded from the pills |
 
 ```bash
-cd flutter && flutter test test/features/capture/
+cd flutter && flutter test test/presentation/capture/
 ```

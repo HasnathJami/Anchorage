@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:anchorage_harbor/app/anchorage_harbor_app.dart';
 import 'package:anchorage_harbor/background/sync_worker.dart';
-import 'package:anchorage_harbor/core/di/injector.dart';
-import 'package:anchorage_harbor/features/sync/data/services/connectivity_monitor.dart';
-import 'package:anchorage_harbor/features/sync/domain/services/sync_ports.dart';
+import 'package:anchorage_harbor/di/injector.dart';
+import 'package:anchorage_harbor/data/services/connectivity_monitor.dart';
+import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:workmanager/workmanager.dart';

@@ -78,6 +78,22 @@ final class CameraInterruptedFailure extends Failure {
   const CameraInterruptedFailure({super.cause});
 }
 
+/// This sensor has no flash unit, so the requested mode cannot be honoured.
+///
+/// Separate from [CameraOperationFailure] because the remedy differs and rule
+/// 4 of the taxonomy says that is what earns a case: "the camera could not
+/// complete that action" invites a retry, and retrying will never grow an LED
+/// onto the front camera. The only honest response is to say so and fall back
+/// to off.
+///
+/// The `camera` plugin exposes no way to *ask* whether a sensor has a flash,
+/// so this is discovered by attempting the mode and translating the platform's
+/// refusal. That is deliberate: assuming "front camera means no flash" would
+/// disable a working feature on the phones that do have one.
+final class FlashUnavailableFailure extends Failure {
+  const FlashUnavailableFailure({super.cause});
+}
+
 // ------------------------------------------------------------------- storage
 
 /// Local database or file-system write failed.
@@ -168,6 +184,8 @@ extension FailureRetryability on Failure {
         CameraUnavailableFailure() => false,
         CameraOperationFailure() => false,
         CameraInterruptedFailure() => false,
+        // Retrying will not fit an LED to a sensor that shipped without one.
+        FlashUnavailableFailure() => false,
         UnexpectedFailure() => false,
       };
 

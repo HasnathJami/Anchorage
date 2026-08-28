@@ -62,6 +62,8 @@ implementation of the requirement has a specific, demonstrable failure mode on a
 39. [Attendance and queue data excluded from cloud backup](#39-data-excluded-from-cloud-backup)
 40. [Documentation as a deliverable](#40-documentation-as-a-deliverable)
 41. [The dependency rule is a test, not a convention](#41-the-dependency-rule-is-a-test-not-a-convention)
+42. [The flash was decorative; now it works, and it has a deadline](#42-the-flash-was-decorative-now-it-works-and-it-has-a-deadline)
+43. [Two platform round-trips per pinch frame, removed](#43-two-platform-round-trips-per-pinch-frame-removed)
 
 ---
 
@@ -784,3 +786,71 @@ tree in exchange, and it fails *loudly and specifically* rather than not at all 
 difference between a rule and a wish.
 
 **Where:** `app/src/test/kotlin/com/anchorage/perimeter/architecture/ArchitectureTest.kt`.
+
+---
+
+## 42. The flash was decorative; now it works, and it has a deadline
+
+Three defects, one root cause: the flash rules lived inside the Bloc's toggle handler, and a
+rule that lives inside a handler is a rule nobody tests. There was not a single flash test in
+the suite.
+
+**The torch was unreachable.** The cycle was a `const List` of `off → auto → always`.
+`CaptureFlashMode.torch` existed, `CameraPort` accepted it, the plugin mapped it and the chrome
+had an icon ready for it — but nothing a user could press ever selected it. "The flashlight
+does not work" was literally true: there was no way to turn it on.
+
+**A chosen mode was silently lost.** The flash lived on `CameraSettings`, which lives on
+`CameraSession`, which is destroyed and rebuilt every time the sensor is released — a lens
+switch, a phone call, a trip to another app. Set "always", tap `0.5x`, and the flash was off
+again with no indication it had changed.
+
+**A fresh controller was never told anything.** A new `CameraController` does not start where
+the last one left off; the plugin's own default is `auto`. So even a user who never touched
+the button had hardware set to `auto` behind a button reading "off".
+
+The fix moves the rules into [`FlashPolicy`](../flutter/lib/domain/entities/flash_policy.dart)
+and the user's choice onto `CameraState`, outside the session that keeps dying. Every open —
+cold start, lens switch, resume — re-applies it explicitly, including `off`.
+
+**The battery rule that came with it:** the torch is the only mode whose cost continues after
+the user stops interacting, so it is the only one with a deadline. It never survives an
+interruption (the sensor was disposed, the LED is already dark, and relighting it unattended
+on resume is the most expensive thing this screen can do), and it switches itself off after
+two idle minutes with a snackbar saying so. Every other mode is restored exactly as it was —
+over-correcting into "reset everything on resume" would just be the original bug wearing a
+hat.
+
+**And an honest failure case.** The `camera` plugin offers no way to *ask* whether a sensor has
+a flash, so assuming "front camera means no flash" would disable a working feature on the
+phones that have one. Instead the mode is attempted and the platform's `setFlashModeFailed` is
+translated into `FlashUnavailableFailure` — a distinct case, because "the camera could not
+complete that action" invites a retry and retrying will never fit an LED to a sensor that
+shipped without one. The app says "This camera has no flash", falls back to off, and leaves
+the preview running.
+
+**Where:** `flash_policy.dart`, `camera_bloc.dart`, `camera_plugin_adapter.dart`.
+**Tests:** 7 in `flash_policy_test.dart`, 8 in the `flash` group of `camera_bloc_test.dart`.
+
+---
+
+## 43. Two platform round-trips per pinch frame, removed
+
+`setZoom` fetched `getMinZoomLevel()` and `getMaxZoomLevel()` over the platform channel on
+**every call**, to clamp against two numbers that are fixed properties of a sensor and cannot
+change while it is open. A pinch fires dozens of zoom events a second, so a single gesture
+spent hundreds of round-trips re-learning the same two values.
+
+They are now read once when the controller opens and cached.
+
+The Bloc got the matching half: a pinch held against either end of the range produces a stream
+of identical clamped values, and each one used to cross the channel to set the zoom the sensor
+was already at. If the value has not moved there is nothing to say, so nothing is sent.
+
+Neither is a micro-optimisation dressed up. The preview, the sensor and the AF motor are
+already the expensive part of a camera screen; adding hundreds of avoidable IPC wake-ups a
+second on top of them is the difference between a viewfinder that costs what it must and one
+that costs more.
+
+**Where:** `camera_plugin_adapter.dart`, `camera_bloc.dart`.
+**Test:** `a zoom that has not moved is never sent to the platform`.
