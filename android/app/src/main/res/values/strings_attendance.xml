@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Screen chrome -->
+    <string name="attendance_title">Attendance</string>
+    <string name="attendance_back">Back</string>
+    <string name="attendance_history">Attendance history</string>
+
+    <!-- Office context card -->
+    <string name="attendance_step_one">STEP 1: OFFICE CONTEXT</string>
+    <string name="attendance_office_help">To mark your attendance, ensure your current office location is correctly identified.</string>
+    <string name="attendance_office_help_configured">Your office is anchored. Move within %1$d metres of it during the check-in window to mark attendance.</string>
+    <string name="attendance_set_office">Set Office Location</string>
+    <string name="attendance_update_office">Update Office Location</string>
+    <string name="attendance_capturing_office">Locating you…</string>
+    <string name="attendance_coordinates">Lat: %1$s, Lon: %2$s</string>
+    <string name="attendance_coordinates_empty">No office anchored yet</string>
+    <string name="attendance_anchor_accuracy">Anchored to ±%1$s accuracy</string>
+    <string name="attendance_clear_office">Clear</string>
+
+    <!-- Dial -->
+    <string name="attendance_dial_away">AWAY</string>
+    <string name="attendance_dial_unknown">--</string>
+    <string name="attendance_dial_locating">LOCATING</string>
+    <string name="attendance_dial_no_office">NO OFFICE</string>
+    <string name="attendance_dial_description">You are %1$s from the office</string>
+    <string name="attendance_dial_description_unknown">Distance to the office is not known yet</string>
+
+    <!-- Status pill -->
+    <string name="attendance_status_in_range">IN RANGE</string>
+    <string name="attendance_status_out_of_range">OUT OF RANGE</string>
+    <string name="attendance_status_low_confidence">WEAK SIGNAL</string>
+    <string name="attendance_status_waiting">AWAITING FIX</string>
+    <string name="attendance_status_no_office">OFFICE NOT SET</string>
+    <string name="attendance_status_checked_in">CHECKED IN</string>
+
+    <!-- Helper copy under the dial -->
+    <string name="attendance_helper_out_of_range">Move within %1$d meters of the designated office location to enable check-in.</string>
+    <string name="attendance_helper_in_range">You are inside the office perimeter. Check-in is unlocked.</string>
+    <string name="attendance_helper_low_confidence">The signal is accurate to about ±%1$s, which is wider than the %2$d m perimeter. Waiting for a better fix.</string>
+    <string name="attendance_helper_waiting">Acquiring a satellite fix…</string>
+    <string name="attendance_helper_no_office">Anchor your office above to start measuring distance.</string>
+    <string name="attendance_helper_marked">Attendance recorded at %1$s, %2$s from the office.</string>
+
+    <!-- Check-in panel -->
+    <string name="attendance_mark">Mark Attendance</string>
+    <string name="attendance_marking">Verifying your location…</string>
+    <string name="attendance_marked">Attendance Marked</string>
+    <string name="attendance_available">AVAILABLE %1$s</string>
+    <string name="attendance_window_closed">WINDOW CLOSED · %1$s</string>
+    <string name="attendance_locked">Check-in locked</string>
+    <string name="attendance_unlocked">Check-in unlocked</string>
+
+    <!-- Banners -->
+    <string name="notice_permission_required_title">Location permission needed</string>
+    <string name="notice_permission_required_body">Anchorage needs your location to tell whether you are at the office. It is only read while this screen is open.</string>
+    <string name="notice_permission_required_action">Grant permission</string>
+
+    <string name="notice_permission_blocked_title">Permission is blocked</string>
+    <string name="notice_permission_blocked_body">Android will not ask again. Enable location for Anchorage in system settings to continue.</string>
+    <string name="notice_permission_blocked_action">Open settings</string>
+
+    <string name="notice_services_off_title">Location is switched off</string>
+    <string name="notice_services_off_body">Turn on device location so Anchorage can measure your distance from the office.</string>
+    <string name="notice_services_off_action">Turn on location</string>
+
+    <string name="notice_weak_signal_title">Signal too weak to trust</string>
+    <string name="notice_weak_signal_body">Your position is only accurate to ±%1$s. Step outside or near a window for a sharper fix.</string>
+    <string name="notice_weak_signal_action">Try again</string>
+
+    <string name="notice_position_unavailable_title">No position available</string>
+    <string name="notice_position_unavailable_body">The device could not produce a location fix. This usually clears up outdoors.</string>
+    <string name="notice_position_unavailable_action">Retry</string>
+
+    <string name="notice_anchor_rejected_title">Fix too coarse to anchor</string>
+    <string name="notice_anchor_rejected_body">The reading was accurate to ±%1$s but anchoring an office needs ±%2$s or better, otherwise the 50 m perimeter would be meaningless.</string>
+    <string name="notice_anchor_rejected_action">Try again</string>
+
+    <string name="notice_storage_title">Saved data could not be read</string>
+    <string name="notice_storage_body">Anchorage could not reach its local store. Your office and history may be out of date.</string>
+    <string name="notice_storage_action">Retry</string>
+
+    <string name="notice_mock_location_title">Mock location detected</string>
+    <string name="notice_mock_location_body">This device is reporting a simulated position. The check-in will still work and is recorded as such.</string>
+    <string name="notice_mock_location_action">Dismiss</string>
+
+    <!-- Snackbars -->
+    <string name="message_outside_geofence">You moved out of range before the check-in completed.</string>
+    <string name="message_window_closed">Check-in is only open %1$s.</string>
+    <string name="message_already_marked">Attendance for today is already recorded.</string>
+    <string name="message_office_not_configured">Anchor your office location first.</string>
+    <string name="message_location_timeout">Could not get a fix in time. Try again with a clearer view of the sky.</string>
+    <string name="message_unknown">Something went wrong. Please try again.</string>
+    <string name="message_office_anchored">Office anchored to ±%1$s accuracy.</string>
+    <string name="message_attendance_marked">Attendance marked at %1$s.</string>
+
+    <!-- Units -->
+    <string name="unit_meters_short">%1$dm</string>
+    <string name="unit_kilometres_short">%1$s km</string>
+    <string name="unit_meters_accuracy">%1$d m</string>
+</resources>
