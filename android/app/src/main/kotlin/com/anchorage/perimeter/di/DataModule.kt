@@ -12,12 +12,14 @@ import com.anchorage.perimeter.data.local.room.AnchorageDatabase
 import com.anchorage.perimeter.data.local.room.AttendanceDao
 import com.anchorage.perimeter.data.location.AndroidLocationEnvironment
 import com.anchorage.perimeter.data.location.FusedLocationTracker
+import com.anchorage.perimeter.data.map.OsmTileSource
 import com.anchorage.perimeter.data.location.LocationEnvironment
 import com.anchorage.perimeter.data.repository.AttendanceRepositoryImpl
 import com.anchorage.perimeter.data.repository.OfficeAnchorRepositoryImpl
 import com.anchorage.perimeter.domain.port.AttendanceRepository
 import com.anchorage.perimeter.domain.port.IdGenerator
 import com.anchorage.perimeter.domain.port.LocationTracker
+import com.anchorage.perimeter.domain.port.MapTileSource
 import com.anchorage.perimeter.domain.port.OfficeAnchorRepository
 import com.anchorage.perimeter.domain.port.SystemTimeProvider
 import com.anchorage.perimeter.domain.port.TimeProvider
@@ -60,6 +62,10 @@ abstract class DataBindingsModule {
     @Binds
     @Singleton
     abstract fun bindAttendanceRepository(impl: AttendanceRepositoryImpl): AttendanceRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindMapTileSource(impl: OsmTileSource): MapTileSource
 }
 
 /** Constructs the framework objects Hilt cannot build by itself. */

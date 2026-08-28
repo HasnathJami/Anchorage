@@ -173,7 +173,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **102 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
+Current state: **129 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---
@@ -183,6 +183,8 @@ tests. `flutter analyze` is clean. Keep it that way.
 Both apps have a token layer. **Never put a raw colour, size or radius at a call site.**
 
 * Android: `core/designsystem/` → `AnchorageTheme.colors/typography/shapes/spacing`.
+* The office picker fetches OpenStreetMap raster tiles — the **only** outbound call in the
+  Android app. It degrades to a plain grid offline; never make it a hard requirement.
 * Flutter: `HarborColors` / `HarborTypography` `ThemeExtension`s, reached via
   `context.harborColors` / `context.harborText`, plus `HarborSpacing` and `HarborRadius`.
 

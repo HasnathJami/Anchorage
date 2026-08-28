@@ -60,3 +60,18 @@ desktop.ini
 *.log
 *.tmp
 *.hprof
+
+# --- Markdown --------------------------------------------------------------
+# Every Markdown file is ignored except README.md, which stays as the one
+# document the repository presents to a reader.
+#
+# The negation must come *after* the `*.md` pattern — git applies the last
+# matching rule, so reversing these two lines would silently ignore README.md
+# along with everything else.
+#
+# `!README.md` (no leading slash) keeps a file of that name at *any* depth:
+# the root README, `docs/screenshots/README.md`, and the Flutter-generated
+# `flutter/ios/.../LaunchImage.imageset/README.md`. To keep only the one at the
+# repository root, change it to `!/README.md`.
+*.md
+!README.md

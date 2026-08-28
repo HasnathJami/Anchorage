@@ -53,6 +53,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner as ComposeLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.anchorage.perimeter.R
 import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
+import com.anchorage.perimeter.presentation.common.hasLocationPermission
+import com.anchorage.perimeter.presentation.common.openAppSettings
+import com.anchorage.perimeter.presentation.common.openLocationSettings
+import com.anchorage.perimeter.presentation.common.shouldShowLocationRationale
 import com.anchorage.perimeter.domain.model.GeoPoint
 import com.anchorage.perimeter.domain.model.OfficeAnchor
 import com.anchorage.perimeter.domain.policy.GeofencePolicy
@@ -77,6 +81,7 @@ import kotlinx.coroutines.launch
 fun AttendanceRoute(
     onBack: () -> Unit,
     onOpenHistory: () -> Unit,
+    onPickOffice: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AttendanceViewModel = hiltViewModel(),
 ) {
@@ -159,6 +164,7 @@ fun AttendanceRoute(
         snackbarHostState = snackbarHostState,
         onBack = onBack,
         onOpenHistory = onOpenHistory,
+        onPickOffice = onPickOffice,
         onIntent = viewModel::onIntent,
         modifier = modifier,
     )
@@ -178,6 +184,7 @@ fun AttendanceContent(
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onOpenHistory: () -> Unit,
+    onPickOffice: () -> Unit = {},
     onIntent: (AttendanceIntent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -256,7 +263,7 @@ fun AttendanceContent(
 
                 OfficeContextCard(
                     state = state,
-                    onSetOfficeLocation = { onIntent(AttendanceIntent.SetOfficeLocationClicked) },
+                    onSetOfficeLocation = onPickOffice,
                     onClearOffice = { onIntent(AttendanceIntent.ClearOfficeClicked) },
                 )
 
@@ -276,51 +283,6 @@ fun AttendanceContent(
 }
 
 // --------------------------------------------------------------- platform glue
-
-private fun Context.hasLocationPermission(): Boolean =
-    androidx.core.content.ContextCompat.checkSelfPermission(
-        this,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-    ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
-        androidx.core.content.ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-
-/**
- * True while Android is still willing to show the permission dialog.
- *
- * The flag lives on Activity, so this walks the ContextWrapper chain rather
- * than assuming the composition's context is one - which it is not when the
- * screen is hosted inside a `ComposeView`.
- */
-private fun Context.shouldShowLocationRationale(): Boolean {
-    val activity = generateSequence(this) { (it as? android.content.ContextWrapper)?.baseContext }
-        .filterIsInstance<android.app.Activity>()
-        .firstOrNull() ?: return true
-
-    return androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-        activity,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-    )
-}
-
-private fun Context.openAppSettings() {
-    startActivity(
-        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        },
-    )
-}
-
-private fun Context.openLocationSettings() {
-    startActivity(
-        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        },
-    )
-}
 
 private fun Context.messageFor(reason: FailureReason, windowLabel: String): String = when (reason) {
     FailureReason.OutsideGeofence -> getString(R.string.message_outside_geofence)

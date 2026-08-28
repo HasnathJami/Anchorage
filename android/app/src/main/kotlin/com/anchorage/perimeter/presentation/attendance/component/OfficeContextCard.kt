@@ -27,6 +27,7 @@ import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.anchorage.perimeter.presentation.attendance.AttendanceFormatters
 import com.anchorage.perimeter.presentation.attendance.AttendanceUiState
 import com.anchorage.perimeter.R
+import com.anchorage.perimeter.domain.model.AnchorSource
 
 /**
  * "STEP 1: OFFICE CONTEXT" - the card that captures and displays the anchor.
@@ -89,10 +90,18 @@ fun OfficeContextCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = stringResource(
-                        R.string.attendance_anchor_accuracy,
-                        AttendanceFormatters.accuracy(anchor.accuracyMeters),
-                    ),
+                    // A hand-placed pin has no measured accuracy, so it is not
+                    // given one. Rendering "±0 m" for it would claim a
+                    // precision nobody measured.
+                    text = when (anchor.source) {
+                        AnchorSource.ManualPlacement ->
+                            stringResource(R.string.anchor_placed_manually)
+
+                        AnchorSource.GpsFix -> stringResource(
+                            R.string.attendance_anchor_accuracy,
+                            AttendanceFormatters.accuracy(anchor.accuracyMeters),
+                        )
+                    },
                     style = AnchorageTheme.typography.caption,
                     color = colors.textTertiary,
                 )

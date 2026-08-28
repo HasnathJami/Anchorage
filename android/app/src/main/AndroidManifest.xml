@@ -11,6 +11,15 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!--
+        Map tiles for the office picker, and nothing else. This is the only
+        outbound destination in the app: no analytics, no crash reporting, no
+        attendance data ever leaves the device. The picker degrades to a plain
+        grid when this permission yields nothing, so the feature works offline.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
         Play Services location works without GPS hardware (Wi-Fi / cell
         trilateration), so the feature is declared optional. Marking it
         required would silently hide the app from tablets on the Play Store.

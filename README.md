@@ -82,7 +82,7 @@ requires.
 
 | Requirement | Implementation |
 | --- | --- |
-| Button to "Set Office Location" that fetches GPS and saves locally | `CaptureOfficeAnchorUseCase` → `OfficeAnchorLocalSource` (DataStore) |
+| Button to "Set Office Location" that fetches GPS and saves locally | `OfficePickerRoute` — a map with a draggable perimeter, seeded by `CaptureOfficeAnchorUseCase`’s fix and confirmed by `PlaceOfficeAnchorUseCase` → `OfficeAnchorLocalSource` (DataStore) |
 | "Mark Attendance" enabled only within 50 m | `GeofenceEvaluator` + `AttendanceStatus.canMarkAttendance`; re-validated authoritatively in `MarkAttendanceUseCase` |
 | Real-time distance indicator | `DistanceDial` fed by `ObserveAttendanceStatusUseCase` |
 | Jetpack Compose UI matching the screenshot | `AttendanceScreen.kt` + `core/designsystem/` |
@@ -356,13 +356,13 @@ over pure domain code, with fakes standing in for hardware.
 | `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 98 | Sync engine (22), camera Bloc incl. flash (27), sync domain (19), formatters (10), upload manager Bloc (9), flash policy (7), architecture (4) |
-| **Total** | **200** | |
+| **Total** | **227** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew test        # 102 tests
+cd android  && ./gradlew test        # 129 tests
 cd ../flutter && flutter test        # 98 tests
 ```
 

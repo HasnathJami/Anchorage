@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.anchorage.perimeter.core.common.error.AppError
 import com.anchorage.perimeter.core.common.outcome.Outcome
+import com.anchorage.perimeter.domain.model.AnchorSource
 import com.anchorage.perimeter.domain.model.GeoPoint
 import com.anchorage.perimeter.domain.model.OfficeAnchor
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +61,7 @@ class OfficeAnchorLocalSource @Inject constructor(
             preferences[KEY_ACCURACY] = anchor.accuracyMeters
             preferences[KEY_CAPTURED_AT] = anchor.capturedAtEpochMillis
             preferences[KEY_LABEL] = anchor.label
+            preferences[KEY_SOURCE] = anchor.source.name
         }
     }
 
@@ -70,6 +72,7 @@ class OfficeAnchorLocalSource @Inject constructor(
             preferences.remove(KEY_ACCURACY)
             preferences.remove(KEY_CAPTURED_AT)
             preferences.remove(KEY_LABEL)
+            preferences.remove(KEY_SOURCE)
         }
     }
 
@@ -90,6 +93,12 @@ class OfficeAnchorLocalSource @Inject constructor(
                 accuracyMeters = accuracy,
                 capturedAtEpochMillis = capturedAt,
                 label = this[KEY_LABEL] ?: OfficeAnchor.DEFAULT_LABEL,
+                // Anchors written before provenance was recorded were all
+                // GPS captures, so a missing key reads as GpsFix rather than
+                // forcing an upgrade to look like a hand-placed pin.
+                source = this[KEY_SOURCE]
+                    ?.let { name -> AnchorSource.entries.firstOrNull { it.name == name } }
+                    ?: AnchorSource.GpsFix,
             )
         }.getOrNull() // Out-of-range persisted values degrade to "not configured".
     }
@@ -109,5 +118,6 @@ class OfficeAnchorLocalSource @Inject constructor(
         val KEY_ACCURACY = floatPreferencesKey("office_accuracy_meters")
         val KEY_CAPTURED_AT = longPreferencesKey("office_captured_at")
         val KEY_LABEL = stringPreferencesKey("office_label")
+        val KEY_SOURCE = stringPreferencesKey("office_source")
     }
 }

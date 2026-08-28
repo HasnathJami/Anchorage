@@ -284,6 +284,12 @@ class AttendanceViewModel @Inject constructor(
         is AppError.Attendance,
         is AppError.Unexpected,
         -> null
+
+        // This screen fetches no imagery, so a tile failure cannot originate
+        // here. It is listed rather than swept into an `else` so that adding a
+        // map to Attendance later trips this branch instead of silently
+        // swallowing the failure.
+        is AppError.MapTiles -> null
     }
 
     private fun AppError.toFailureReason(): FailureReason? = when (this) {

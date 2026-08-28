@@ -13,8 +13,27 @@ data class OfficeAnchor(
     val accuracyMeters: Float,
     val capturedAtEpochMillis: Long,
     val label: String = DEFAULT_LABEL,
+    val source: AnchorSource = AnchorSource.GpsFix,
 ) {
     companion object {
         const val DEFAULT_LABEL = "Head Office"
     }
+}
+
+/**
+ * How the anchor came to exist.
+ *
+ * This decides what the UI may honestly say about [OfficeAnchor.accuracyMeters].
+ * A GPS-captured anchor inherits the error radius of the fix behind it, and
+ * that number means something. A pin dropped on a map has no fix and therefore
+ * no error radius - reporting "±0 m" for one would claim a precision nobody
+ * measured. The provenance is stored so the two can never be confused after
+ * the fact.
+ */
+enum class AnchorSource {
+    /** Captured from a live high-accuracy fix, subject to the accuracy gate. */
+    GpsFix,
+
+    /** Placed by hand on the map picker. Carries no measured accuracy. */
+    ManualPlacement,
 }

@@ -64,6 +64,7 @@ implementation of the requirement has a specific, demonstrable failure mode on a
 41. [The dependency rule is a test, not a convention](#41-the-dependency-rule-is-a-test-not-a-convention)
 42. [The flash was decorative; now it works, and it has a deadline](#42-the-flash-was-decorative-now-it-works-and-it-has-a-deadline)
 43. [Two platform round-trips per pinch frame, removed](#43-two-platform-round-trips-per-pinch-frame-removed)
+44. [The office is placed on a map, not grabbed blind](#44-the-office-is-placed-on-a-map-not-grabbed-blind)
 
 ---
 
@@ -854,3 +855,73 @@ that costs more.
 
 **Where:** `camera_plugin_adapter.dart`, `camera_bloc.dart`.
 **Test:** `a zoom that has not moved is never sent to the platform`.
+
+---
+
+## 44. The office is placed on a map, not grabbed blind
+
+**What the brief asked for:** *"Button to 'Set Office Location' that fetches GPS and saves
+locally."*
+
+**What that does on a real phone:** whatever fix the device happens to produce becomes the
+office — and its error is inherited by every check-in for the life of the install. A ±30 m fix
+taken indoors puts the office 30 m from the building, permanently, and the user has no way to
+see it or correct it. The accuracy gate ([#3](#3-a-stricter-bar-for-anchoring-than-for-checking-in))
+refuses the *worst* of those, but a fix that passes the gate can still be 30 m wrong.
+
+`OfficePickerRoute` keeps the GPS fix and demotes it from *answer* to *suggestion*. The map
+opens centred on it (or on the office already saved), and the user drags the real building
+under the crosshair and confirms.
+
+### The three states of the perimeter
+
+The 50 m ring is drawn to true scale at the current latitude and zoom, and coloured by where
+the user actually is:
+
+| State | Ring | Sentence beneath |
+| --- | --- | --- |
+| Inside | green | *"You are 10m from this point — inside the 50 m perimeter."* |
+| Outside | red | *"You are 57m from this point — outside the 50 m perimeter."* |
+| Position unknown | **neutral blue** | *"Your position is unknown, so the perimeter is shown in neutral."* |
+
+The third state is the one worth defending. Painting the ring green or red before the device
+knows where the user is would be inventing a fact, so it does neither. And the sentence is not
+decoration: it is what stops the state being carried by colour alone.
+
+### Placed by hand is recorded as placed by hand
+
+A dropped pin has no measured accuracy. Storing `±0 m` for it would claim a precision nobody
+measured, so `OfficeAnchor` carries an `AnchorSource`, and the office card reads *"Placed by
+hand on the map"* instead of an accuracy it cannot justify. `PlaceOfficeAnchorUseCase` is
+deliberately a sibling of `CaptureOfficeAnchorUseCase` rather than the same use case with a
+flag: one gates on a measurement, the other has no measurement to gate.
+
+### Failing without breaking
+
+The screen adds a network dependency, so it is built to not need one:
+
+* **Offline** — tiles fail, an amber chip and a retryable dialog appear, and the pin, the
+  perimeter, the coordinates and Confirm all keep working over a plain grid. A picker that
+  refuses to open without signal is useless in exactly the basements and car parks where
+  people set an office.
+* **Every location failure gets the dialog that fixes it** — permission denied re-opens the
+  system prompt, permission blocked opens Settings, location off opens location settings, a
+  timeout retries. Same rule as the Attendance banners: two cases with the same words and the
+  same button are one case.
+* **Nothing throws.** `OsmTileSource` translates every `IOException`, DNS failure, timeout and
+  non-200 into an `AppError.MapTiles` value; a tile whose bytes will not decode is skipped and
+  the grid shows through.
+* **One GPS request at a time.** A jabbed "find me" cannot stack five high-accuracy requests,
+  each holding the radio awake.
+
+### The bug this found
+
+Running it on a device caught a race the tests had not: `repeatOnLifecycle` delivers the
+permission state *synchronously* while the saved-anchor read is still in flight, so the picker
+would helpfully fly away from the very office the user had opened it to adjust. The first test
+written asserted only the convenient ordering and passed. There is now a test for the order a
+real phone produces.
+
+**Where:** `presentation/officepicker/`, `data/map/OsmTileSource.kt`,
+`domain/geo/WebMercator.kt`, `domain/usecase/PlaceOfficeAnchorUseCase.kt`.
+**Tests:** 15 in `OfficePickerViewModelTest`, 9 in `WebMercatorTest`.

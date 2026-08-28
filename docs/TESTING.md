@@ -1,6 +1,6 @@
 # Testing
 
-**200 unit tests** across both applications, plus 5 Compose instrumentation tests. All of them
+**227 unit tests** across both applications, plus 5 Compose instrumentation tests. All of them
 run without a device.
 
 ---
@@ -43,7 +43,7 @@ for 9 a.m.
 
 ## 2. What is covered
 
-### Anchorage Perimeter — 102 tests
+### Anchorage Perimeter — 129 tests
 
 | Area | Tests | Focus |
 | --- | --- | --- |
@@ -51,6 +51,8 @@ for 9 a.m.
 | `domain/` | 48 | Haversine (7), `GeoPoint` validation (5), geofence policy and hysteresis (10), attendance window (6), capture use case (5), mark use case (9), status observer (6) |
 | `data/` | 17 | DataStore round-trip and corruption tolerance (6), Room date/timezone and constraint handling (6), location preflight and ordering (5) |
 | `presentation/attendance/` | 25 | MVI reduction and projection, permission escalation, every action path, concurrency guard (18); formatters incl. timezone (7) |
+| `presentation/officepicker/` | 15 | Opening on the saved office, the permission/anchor-read race, the three perimeter states, hand-placed provenance, every location dialog, offline tiles degrading without blocking, retry, and one-fetch-per-tile |
+| `domain/geo/` (Mercator) | 9 | Projection round-trips, pole clamping, anti-meridian wrap, and that ground resolution scales with latitude so the 50 m ring keeps its true size |
 | `architecture/` | 6 | The dependency rule itself: domain imports no framework and no outer layer, `core/common/` stays pure, presentation never reaches into data, data never reaches into presentation — plus one test asserting the source walk is not empty, so the other five cannot pass vacuously |
 
 ### Anchorage Harbor — 98 tests
@@ -100,7 +102,7 @@ installDebug` before driving the app by hand again.
 
 ## 3. The test doubles
 
-Every port has a hand-written fake. This table *is* the reason 200 tests run without hardware.
+Every port has a hand-written fake. This table *is* the reason 227 tests run without hardware.
 
 | Port | Fake | Notable capability |
 | --- | --- | --- |

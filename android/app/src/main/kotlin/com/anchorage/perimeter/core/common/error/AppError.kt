@@ -68,6 +68,34 @@ sealed interface AppError {
         ) : Location
     }
 
+    /**
+     * Fetching map imagery. Separate from [Location] because the remedies have
+     * nothing in common: a missing tile is a *network* problem the user fixes
+     * by reconnecting, while a missing fix is a *positioning* problem they fix
+     * by stepping outside. Collapsing them would offer the wrong advice.
+     *
+     * None of these is fatal to the screen: the map degrades to a plain grid
+     * and the user can still place a pin, because a picker that refuses to
+     * work offline is worse than one that works without pretty pictures.
+     */
+    sealed interface MapTiles : AppError {
+
+        /** No usable network route to the tile server. */
+        data class Offline(override val cause: Throwable? = null) : MapTiles
+
+        /** The request left but nothing came back in time. */
+        data class Timeout(
+            val waitedMillis: Long,
+            override val cause: Throwable? = null,
+        ) : MapTiles
+
+        /** The server answered, but not with a tile. */
+        data class ServerRejected(
+            val statusCode: Int,
+            override val cause: Throwable? = null,
+        ) : MapTiles
+    }
+
     /** Local persistence failures - DataStore or Room. */
     sealed interface Storage : AppError {
         data class ReadFailed(override val cause: Throwable? = null) : Storage

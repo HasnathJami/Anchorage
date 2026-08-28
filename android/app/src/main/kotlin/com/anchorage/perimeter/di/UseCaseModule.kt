@@ -13,6 +13,7 @@ import com.anchorage.perimeter.domain.port.TimeProvider
 import com.anchorage.perimeter.domain.usecase.CaptureOfficeAnchorUseCase
 import com.anchorage.perimeter.domain.usecase.ClearOfficeAnchorUseCase
 import com.anchorage.perimeter.domain.usecase.MarkAttendanceUseCase
+import com.anchorage.perimeter.domain.usecase.PlaceOfficeAnchorUseCase
 import com.anchorage.perimeter.domain.usecase.ObserveAttendanceHistoryUseCase
 import com.anchorage.perimeter.domain.usecase.ObserveAttendanceStatusUseCase
 import dagger.Module
@@ -104,6 +105,12 @@ object UseCaseModule {
         idGenerator = idGenerator,
         window = window,
     )
+
+    @Provides
+    fun providePlaceOfficeAnchorUseCase(
+        officeAnchorRepository: OfficeAnchorRepository,
+        timeProvider: TimeProvider,
+    ) = PlaceOfficeAnchorUseCase(officeAnchorRepository, timeProvider)
 
     @Provides
     fun provideClearOfficeAnchorUseCase(

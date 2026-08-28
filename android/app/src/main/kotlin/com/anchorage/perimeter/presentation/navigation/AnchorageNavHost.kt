@@ -7,11 +7,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.anchorage.perimeter.presentation.attendance.AttendanceRoute
 import com.anchorage.perimeter.presentation.history.AttendanceHistoryRoute
+import com.anchorage.perimeter.presentation.officepicker.OfficePickerRoute
 
 /** Type-safe-ish route keys; string constants kept in one place. */
 object AnchorageDestinations {
     const val ATTENDANCE = "attendance"
     const val HISTORY = "attendance/history"
+    const val OFFICE_PICKER = "attendance/office"
 }
 
 /**
@@ -35,11 +37,23 @@ fun AnchorageNavHost(
                 // finishes the task rather than popping to an empty stack.
                 onBack = { navController.popBackStack() },
                 onOpenHistory = { navController.navigate(AnchorageDestinations.HISTORY) },
+                onPickOffice = { navController.navigate(AnchorageDestinations.OFFICE_PICKER) },
             )
         }
 
         composable(AnchorageDestinations.HISTORY) {
             AttendanceHistoryRoute(onBack = { navController.popBackStack() })
+        }
+
+        composable(AnchorageDestinations.OFFICE_PICKER) {
+            OfficePickerRoute(
+                onBack = { navController.popBackStack() },
+                // No result is passed back. Attendance observes the anchor
+                // repository, so the save propagates to it through the same
+                // flow that feeds the dial - one source of truth, and no
+                // savedStateHandle round-trip to keep in sync with it.
+                onSaved = { navController.popBackStack() },
+            )
         }
     }
 }
