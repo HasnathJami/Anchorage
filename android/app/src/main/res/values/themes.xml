@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        A bare splash-and-window theme only. All in-app styling is Compose;
+        this exists so the window background matches the app surface and the
+        first frame does not flash black.
+    -->
+    <style name="Theme.Anchorage" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/anchorage_background</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:navigationBarColor">@color/anchorage_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

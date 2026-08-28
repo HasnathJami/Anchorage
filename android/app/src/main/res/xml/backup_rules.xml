@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!--
+        Attendance records and the office anchor are device-local proofs. They
+        are deliberately excluded from cloud backup so a restored phone cannot
+        inherit another device's check-in history.
+    -->
+    <exclude domain="database" path="anchorage-perimeter.db" />
+    <exclude domain="file" path="datastore/" />
+</full-backup-content>

@@ -1,0 +1,393 @@
+# ⚓ Anchorage
+
+**A two-app field-operations suite: know where you are, never lose what you captured.**
+
+Anchorage is the submission for the Senior App Developer Technical Assessment. It is one
+project containing two applications that share a name, a design language and an
+architectural doctrine — and nothing else, because the brief asks for two genuinely
+independent stacks.
+
+| App | Stack | What it does |
+| --- | --- | --- |
+| **Anchorage Perimeter** | Native Android · Kotlin · Jetpack Compose · Kotlin Flow · Hilt | Anchors an office coordinate and lets a user mark attendance only from inside a 50 m geofence, with a live distance dial. |
+| **Anchorage Harbor** | Flutter · Dart · BLoC · get_it | Custom camera with pinch/slider/lens zoom and tap-to-focus, batch capture, and a durable upload queue that survives no signal, low bandwidth, process death and reboot. |
+
+### Why "Anchorage"?
+
+An anchorage is a place a vessel can hold position safely. Both halves of this assessment
+are the same idea in different clothing:
+
+* **Perimeter** anchors you to a *place* — a fixed coordinate everything is measured against.
+* **Harbor** anchors your *cargo* — captured evidence is held fast in a local queue and only
+  released when it has genuinely reached shore.
+
+The anchor even appears in the reference design: it is the icon on the "UPLOAD BATCH" button.
+
+---
+
+## Table of contents
+
+1. [Repository layout](#repository-layout)
+2. [Task 1 — Anchorage Perimeter (Native Android)](#task-1--anchorage-perimeter-native-android)
+3. [Task 2 — Anchorage Harbor (Flutter)](#task-2--anchorage-harbor-flutter)
+4. [Project structure and architectural approach](#project-structure-and-architectural-approach)
+5. [Generative AI usage](#generative-ai-usage)
+6. [How to run](#how-to-run)
+7. [Testing](#testing)
+8. [Screenshots](#screenshots)
+9. [Further documentation](#further-documentation)
+
+---
+
+## Repository layout
+
+```
+Anchorage/
+├── android/                     # Task 1 — Anchorage Perimeter (one Gradle module)
+│   └── app/src/main/kotlin/com/anchorage/perimeter/
+│       ├── presentation/        #   MVI ViewModels + Compose screens, navigation
+│       ├── domain/              #   entities, policies, ports, use cases  (no Android types)
+│       ├── data/                #   FusedLocation, DataStore, Room adapters
+│       ├── di/                  #   Hilt modules: ports → adapters, use-case assembly
+│       └── core/
+│           ├── common/          #   Outcome<T>, AppError taxonomy, dispatchers
+│           └── designsystem/    #   colour/type/shape tokens + shared composables
+│
+├── flutter/                     # Task 2 — Anchorage Harbor
+│   └── lib/
+│       ├── app/                 #   shell, routes, theme extensions
+│       ├── background/          #   WorkManager isolate entry point
+│       ├── core/                #   Failure taxonomy, Result<T>, DI, permissions
+│       └── features/
+│           ├── capture/         #   domain / data / presentation
+│           └── sync/            #   domain / data / presentation
+│
+├── docs/                        # feature-by-feature and cross-cutting documentation
+├── design/                      # reference screenshots from the brief
+├── CLAUDE.md                    # working agreement for AI assistants on this repo
+├── PROMPTS.md                   # every prompt used to build this project
+├── IMPROVEMENTS.md              # what was added beyond the brief, and why
+└── README.md                    # you are here
+```
+
+---
+
+## Task 1 — Anchorage Perimeter (Native Android)
+
+A single `AttendanceScreen` that handles both setup and check-in, exactly as the brief
+requires.
+
+### What the brief asked for, and where it lives
+
+| Requirement | Implementation |
+| --- | --- |
+| Button to "Set Office Location" that fetches GPS and saves locally | `CaptureOfficeAnchorUseCase` → `OfficeAnchorLocalSource` (DataStore) |
+| "Mark Attendance" enabled only within 50 m | `GeofenceEvaluator` + `AttendanceStatus.canMarkAttendance`; re-validated authoritatively in `MarkAttendanceUseCase` |
+| Real-time distance indicator | `DistanceDial` fed by `ObserveAttendanceStatusUseCase` |
+| Jetpack Compose UI matching the screenshot | `AttendanceScreen.kt` + `core/designsystem/` |
+| Kotlin Flow state management | Every read path is a `Flow`; the ViewModel exposes `StateFlow<AttendanceUiState>` |
+| Graceful permission and hardware failure handling | `AppError.Location` taxonomy → `AttendanceNotice` → inline banner with a remedy |
+
+### The screen, state by state
+
+* **No office anchored** — the dial reads `--`, the pill reads `OFFICE NOT SET`, the
+  check-in panel is locked, and the card's status dot is grey.
+* **Out of range** — red arc proportional to `distance / 50 m`, `120m` in the centre,
+  `OUT OF RANGE` pill, and the instruction *"Move within 50 meters of the designated office
+  location to enable check-in."*
+* **In range** — the arc, pill and padlock all turn green/blue together and the button
+  becomes pressable.
+* **Weak signal** — a fix whose own error radius is wider than the fence is reported as
+  `WEAK SIGNAL` in amber, not as a false "in range". See
+  [Improvement #2](IMPROVEMENTS.md).
+* **Already marked today** — green `CHECKED IN` pill with the time and distance of the
+  recorded check-in.
+* **Window closed** — the caption under the button flips from `AVAILABLE 09:00 AM - 10:30 AM`
+  to `WINDOW CLOSED`, in amber.
+
+### Stack
+
+Kotlin 2.2.21 · AGP 8.13.2 · Gradle 8.14.3 · Compose BOM 2025.12.01 · Hilt 2.57.2 ·
+Room 2.8.4 · DataStore 1.1.7 · Play Services Location 21.4.0 · minSdk 26 · targetSdk 36
+
+---
+
+## Task 2 — Anchorage Harbor (Flutter)
+
+Two screens: `CameraPreviewScreen` and the Upload Manager.
+
+### What the brief asked for, and where it lives
+
+| Requirement | Implementation |
+| --- | --- |
+| Custom camera preview screen | `CameraPreviewPage` — full-bleed preview with floating chrome |
+| Pinch-to-zoom | `CameraPinchStarted` / `CameraPinchZoomed`, anchored to the zoom the gesture began at |
+| Zoom slider | `VerticalZoomSlider` — hand-built, because a rotated Material `Slider` inverts its own drag axis |
+| Rounded lens buttons (0.5x, 1x, …) | `LensSelector`, built from the device's *actual* back cameras — a single-lens phone gets one pill, not three fake ones |
+| Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle`, shown optimistically and cleared on a dwell timer |
+| Batch capture with a "Pending Uploads" list | `CaptureBatch` → `EnqueueBatch` → `UploadManagerPage` |
+| Background worker monitoring connectivity | `WorkManagerScheduler` + `syncCallbackDispatcher` |
+| Images stay queued on failure | SQLite-backed `UploadQueueRepositoryImpl`; nothing leaves the queue until the server acknowledges it |
+| Automatic retry on a stable connection, no user action | `ConnectivityMonitor` (with a settle window) → `UploadManagerBloc` → `ProcessUploadQueue` |
+| No API available — mock success and failure | `MockUploadApi` (working transport) + `http_upload_api.dart` (real transport, fully written and commented out) |
+
+### The sync engine in five rules
+
+`ProcessUploadQueue` is the heart of the app. Every rule below has a test that fails if the
+rule is removed.
+
+1. **Never start without a stable link.** Offline or unsettled? Every task is parked in
+   `waitingForConnection` *without spending an attempt*, and a network-constrained wake-up
+   is requested from the OS.
+2. **One task at a time.** Parallel uploads on a weak link starve each other.
+3. **Connectivity failures do not consume attempts.** Losing signal is a pause, not a
+   failure. Only real transport or server errors increment the counter.
+4. **Unretryable failures stop immediately.** A 400 or a missing file fails once and is
+   shown to the user rather than looped five times.
+5. **The queue is the source of truth throughout.** Every transition is written before the
+   next task starts, so process death mid-sweep loses at most one in-flight transfer.
+
+Retries use **exponential backoff with full jitter** (4 s → 8 s → 16 s …, capped at 15 min,
+randomised across `[0, computed]`). Jitter matters: twelve photographs fail together when a
+tunnel swallows the signal, and without it all twelve wake at the same millisecond.
+
+### The mock API
+
+The brief states no API is available. Anchorage Harbor answers that in both of the ways the
+brief permits:
+
+* **`MockUploadApi`** is a *working* transport, not a stub. It streams realistic progress at
+  a configurable throughput, fails at a configurable point, and returns the full failure
+  taxonomy — success, mid-transfer low bandwidth, no internet, retryable 503, permanent 400,
+  and hang-until-timeout. A switcher at the bottom of the Upload Manager changes its
+  behaviour live, so every path can be demonstrated on a real device in seconds.
+* **`http_upload_api.dart`** is the production HTTP implementation, written out in full and
+  commented out. Swapping them is one line in `injector.dart`.
+
+### Stack
+
+Flutter 3.38 · Dart 3.10 · flutter_bloc 9 · bloc_concurrency · get_it 9 · camera 0.12 ·
+sqflite 2.4 · connectivity_plus 7 · workmanager 0.10 · permission_handler 12 · minSdk 24
+
+---
+
+## Project structure and architectural approach
+
+Both apps follow the same layered (clean) architecture with dependencies pointing **inward
+only**, and both use an MVI-flavoured presentation layer.
+
+```
+       ┌──────────────────────────────────────────┐
+       │  Presentation   Compose / Widgets        │   knows: domain
+       │                 ViewModel / BLoC         │
+       ├──────────────────────────────────────────┤
+       │  Domain         entities · policies      │   knows: nothing
+       │                 ports    · use cases     │
+       ├──────────────────────────────────────────┤
+       │  Data           adapters implementing    │   knows: domain
+       │                 the domain's ports       │
+       └──────────────────────────────────────────┘
+```
+
+On Android the rule is **enforced by a test**. The app is a single Gradle module, so the layers
+are packages rather than modules; `ArchitectureTest` reads the source tree and fails the build
+on the first forbidden import, naming the file:
+
+```
+domain/ must not import android., androidx., com.google.android., dagger., javax.inject.
+but was: [MarkAttendanceUseCase.kt: import android.util.Log]
+```
+
+"The domain knows nothing about the framework" therefore stays a checked invariant rather than
+a code-review convention — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §2 for why the
+earlier `kotlin-jvm` module boundary was traded for it.
+
+### The main state holders
+
+| App | Class | Responsibility |
+| --- | --- | --- |
+| Perimeter | `AttendanceViewModel` | Turns `AttendanceIntent` into use-case calls and projects `AttendanceStatus` onto `AttendanceUiState`; holds no geofence or window logic of its own. |
+| Perimeter | `AttendanceHistoryViewModel` | Read-only projection of the attendance log. |
+| Harbor | `CameraBloc` | Camera lifecycle, permissions, zoom/focus/lens, capture and batch hand-off. Shutter events are `droppable`, zoom events `restartable`. |
+| Harbor | `UploadManagerBloc` | Watches the queue and the link; sweeps the queue the moment the link becomes stable. Hoisted above the navigator so sync continues while the user is on the camera screen. |
+
+Both apps share two primitives worth naming:
+
+* **`Outcome<T>` / `Result<T>`** — a two-case sealed result type. Failure is *data*, not
+  control flow, so the compiler forces every caller to handle it.
+* **`AppError` / `Failure`** — closed taxonomies where every case maps to a *different*
+  remedy on screen. Adding a failure mode does not compile until someone has decided how to
+  explain it to a user.
+
+Full detail: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+---
+
+## Generative AI usage
+
+*This section is mandatory per the brief, and is answered honestly.*
+
+This project was built in a single working session with **Claude (Opus 5) running inside
+Claude Code**, driven by me. Every prompt I entered is recorded verbatim in
+**[PROMPTS.md](PROMPTS.md)** — including the corrections, because the corrections are the
+interesting part.
+
+**How I used it.** I treated the model as a fast, tireless implementer and used my own
+judgement as the architecture and review layer. Concretely:
+
+1. **Requirements first, not code first.** I had the brief's PDF read and its embedded UI
+   screenshots extracted and rendered at high zoom *before* any code was written, and the
+   exact hex values of the reference design sampled programmatically from those images
+   rather than eyeballed. That is why the palettes in `Color.kt` and `harbor_colors.dart`
+   carry odd values like `#2B6EEA` and `#235FEB`.
+2. **Architecture decided by me, typed by the model.** The layer boundaries, the decision to
+   guard domain purity with a test rather than a Gradle module, the port/adapter split, the
+   MVI contract shape and the five rules of the sync engine were specified up front; the model
+   wrote them out.
+3. **Test-first on every rule.** Each behavioural rule was expressed as a failing test before
+   implementation, which is how bugs like *"the anchor-rejected banner is wiped by the next
+   GPS update a fraction of a second later"* were caught — that one surfaced as a red test
+   and produced the notice-ownership rule now documented in `AttendanceViewModel`.
+4. **Verified, never assumed.** Nothing here is "it should compile". Every module was
+   actually built and every test suite actually run, repeatedly, and the outputs are what the
+   numbers in this README report.
+
+**Representative prompts** (the full list is in PROMPTS.md):
+
+> *"Read the PDF at E:/IM — extract the embedded UI screenshots and render them at high zoom
+> so I can see the target design precisely, then sample the dominant colours so the palette
+> is transcribed, not guessed."*
+
+> *"Design the geofence as a pure domain policy with no Android types, so it can be tested on
+> the JVM in milliseconds. Add hysteresis — a naive `distance < 50` check will strobe the UI
+> when a user stands on the boundary and GPS jitters by a few metres."*
+
+> *"The sync engine must treat 'no network' and 'server rejected it' as different things: the
+> first parks the task without spending a retry attempt, the second spends one. Write the
+> tests for both before the implementation."*
+
+> *"Explain in the code comment *why* full jitter is used for backoff, not just that it is.
+> A reviewer should learn something from the comment they could not have guessed."*
+
+**What I did not do.** I did not accept generated code unread, and I did not ship anything
+the build or the tests had not confirmed. Where the model's first attempt was wrong — the
+notice-ownership bug above, a `Flow` type-widening error, a test that asserted on jittered
+randomness instead of its ceiling — the fix is in the history and in PROMPTS.md.
+
+---
+
+## How to run
+
+### Prerequisites
+
+| Tool | Version used |
+| --- | --- |
+| JDK | 17 (Android Studio's bundled JBR works) |
+| Android SDK | Platform 36, Build-Tools 36 |
+| Flutter | 3.38.9 (Dart 3.10.8) |
+
+### Clone
+
+```bash
+git clone <your-repo-url> Anchorage
+cd Anchorage
+```
+
+### Task 1 — Anchorage Perimeter (Android)
+
+```bash
+cd android
+
+# Point Gradle at a JDK 17+ (this repo was built with Android Studio's JBR)
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"     # macOS/Linux/Git Bash
+# setx JAVA_HOME "C:\Program Files\Android\Android Studio\jbr"     # Windows, once
+
+./gradlew test              # all JVM unit tests
+./gradlew assembleDebug     # debug APK  -> app/build/outputs/apk/debug/
+./gradlew assembleRelease   # release APK -> app/build/outputs/apk/release/
+```
+
+Or open the `android/` folder in Android Studio and press Run.
+
+`local.properties` is generated with an `sdk.dir` pointing at the machine that built it —
+Android Studio will rewrite it, or edit it by hand.
+
+**On device:** grant location permission when asked, tap **Set Office Location** while
+outdoors (the app refuses a fix coarser than ±35 m — see
+[Improvement #2](IMPROVEMENTS.md)), then walk out of and back into the 50 m radius to watch
+the dial and the padlock respond.
+
+> **Testing the geofence without walking 50 metres:** use the emulator's extended controls
+> (⋯ → Location) or `adb emu geo fix <lon> <lat>` to move the device. The app flags mock
+> providers in an amber banner but deliberately still accepts them — see
+> [Improvement #6](IMPROVEMENTS.md).
+
+### Task 2 — Anchorage Harbor (Flutter)
+
+```bash
+cd flutter
+
+flutter pub get
+flutter test                # all unit / bloc tests
+flutter run --release       # on a connected device
+flutter build apk --release # -> build/app/outputs/flutter-apk/app-release.apk
+```
+
+**On device:** grant camera permission, take a few photographs, tap **UPLOAD BATCH (n)**,
+then open the Upload Manager (gear icon, or the thumbnail). Use the **MOCK API RESPONSE**
+switcher at the bottom to force each failure mode and watch the queue react. To see the
+real resilience behaviour, turn off Wi-Fi and mobile data: the rows move to
+`WAITING FOR CONNECTION` and resume by themselves within a few seconds of the network
+returning — no button, no app restart.
+
+---
+
+## Testing
+
+Both apps are tested at the layer where the logic actually lives: fast JVM/Dart unit tests
+over pure domain code, with fakes standing in for hardware.
+
+| Suite | Tests | What it covers |
+| --- | --- | --- |
+| `android core/common/` | 6 | `Outcome` combinators |
+| `android domain/` | 48 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases |
+| `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
+| `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
+| `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
+| `flutter` | 78 | Sync engine (22), sync domain (19), camera Bloc (18), upload manager Bloc (9), formatters (10) |
+| **Total** | **180** | |
+
+Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
+require a device or emulator.
+
+```bash
+cd android  && ./gradlew test        # 102 tests
+cd ../flutter && flutter test        # 78 tests
+```
+
+Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.
+
+---
+
+## Screenshots
+
+Reference designs supplied with the brief are in [`design/`](design/). Screenshots of the
+running applications belong in [`docs/screenshots/`](docs/screenshots/) — see the note in
+that folder for the exact captures to take and the `adb` one-liner that grabs them.
+
+---
+
+## Further documentation
+
+| Document | What is in it |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering, module graph, dependency rules, DI strategy, and the decisions behind them |
+| [docs/feature-geofenced-attendance.md](docs/feature-geofenced-attendance.md) | The geofence: maths, policy, hysteresis, the attendance window, the full state table |
+| [docs/feature-camera-capture.md](docs/feature-camera-capture.md) | Camera lifecycle, zoom model, focus, lens discovery, batching |
+| [docs/feature-resilient-sync.md](docs/feature-resilient-sync.md) | The sync engine end to end: queue schema, state machine, backoff, foreground/background split |
+| [docs/ERROR-HANDLING.md](docs/ERROR-HANDLING.md) | Every failure mode in both apps and exactly what the user sees |
+| [docs/DESIGN-SYSTEM.md](docs/DESIGN-SYSTEM.md) | Tokens, components, and how the reference design was transcribed |
+| [docs/TESTING.md](docs/TESTING.md) | Strategy, fakes-over-mocks rationale, how to run everything |
+| [IMPROVEMENTS.md](IMPROVEMENTS.md) | Every enhancement beyond the brief, with the reasoning |
+| [PROMPTS.md](PROMPTS.md) | Every prompt used to build this, including the corrections |
+| [CLAUDE.md](CLAUDE.md) | Working agreement for AI assistants contributing to this repo |

@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+#  Anchorage — repository ignore rules
+# ---------------------------------------------------------------------------
+
+# --- Android / Gradle ------------------------------------------------------
+android/.gradle/
+android/build/
+android/*/build/
+android/*/*/build/
+android/local.properties
+android/.idea/
+android/captures/
+android/.cxx/
+*.apk
+*.aab
+*.aar
+*.ap_
+*.dex
+*.class
+*.jks
+*.keystore
+
+# --- Flutter / Dart --------------------------------------------------------
+flutter/.dart_tool/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.packages
+flutter/build/
+flutter/android/.gradle/
+flutter/android/local.properties
+flutter/android/app/debug/
+flutter/android/app/profile/
+flutter/android/app/release/
+flutter/ios/Pods/
+flutter/ios/.symlinks/
+flutter/ios/Flutter/Flutter.framework
+flutter/ios/Flutter/Flutter.podspec
+flutter/ios/Flutter/Generated.xcconfig
+flutter/ios/Flutter/flutter_export_environment.sh
+flutter/ios/Runner.xcworkspace/xcshareddata/
+flutter/coverage/
+
+# `pubspec.lock` IS committed: this is an application, not a library, and a
+# reproducible dependency set is the point.
+
+# --- IDE -------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+!.vscode/settings.json
+
+# --- OS --------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs / temp -----------------------------------------------------------
+*.log
+*.tmp
+*.hprof

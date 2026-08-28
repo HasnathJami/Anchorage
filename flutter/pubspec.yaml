@@ -1,0 +1,56 @@
+name: anchorage_harbor
+description: >-
+  Anchorage Harbor - a resilient capture-and-sync client. Photographs are
+  captured into batches, held in a durable local queue, and delivered by a
+  background worker that survives loss of connectivity, process death and
+  reboot.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- State management -----------------------------------------------------
+  # BLoC for the two screens that own real workflows (capture, sync) and Cubit
+  # for the small, purely-derived pieces of state.
+  flutter_bloc: ^9.1.1
+  bloc: ^9.0.0
+  bloc_concurrency: ^0.3.0
+  equatable: ^2.1.0
+
+  # --- Dependency injection -------------------------------------------------
+  # get_it with an explicit, hand-written composition root: every binding is
+  # greppable and the wiring order is visible, which a codegen container hides.
+  get_it: ^9.2.1
+
+  # --- Hardware & platform --------------------------------------------------
+  camera: ^0.12.0+2
+  permission_handler: ^12.0.3
+  path_provider: ^2.1.6
+  path: ^1.9.1
+
+  # --- Persistence ----------------------------------------------------------
+  sqflite: ^2.4.2
+
+  # --- Connectivity & background --------------------------------------------
+  connectivity_plus: ^7.3.1
+  workmanager: ^0.10.9
+
+  # --- Utilities ------------------------------------------------------------
+  uuid: ^4.6.0
+  intl: ^0.20.3
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  bloc_test: ^10.0.0
+  mocktail: ^1.0.5
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
