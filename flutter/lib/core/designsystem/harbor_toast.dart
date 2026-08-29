@@ -103,9 +103,21 @@ class _ToastHandle {
 /// exists, and a key that has never been attached is a null dereference.
 class _ToastSignal extends ChangeNotifier {
   bool _retracted = false;
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   void retract() {
-    if (_retracted) return;
+    // A [ChangeNotifier] used after disposal throws, and this one can be
+    // reached from a static: if a route is torn down while a toast is still
+    // animating out, the surface never gets to run its own clean-up and the
+    // handle outlives it. Cheap insurance against taking the app down over a
+    // message that had already gone.
+    if (_retracted || _disposed) return;
     _retracted = true;
     notifyListeners();
   }

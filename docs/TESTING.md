@@ -55,20 +55,20 @@ for 9 a.m.
 | `domain/geo/` (Mercator) | 9 | Projection round-trips, pole clamping, anti-meridian wrap, and that ground resolution scales with latitude so the 50 m ring keeps its true size |
 | `architecture/` | 6 | The dependency rule itself: domain imports no framework and no outer layer, `core/common/` stays pure, presentation never reaches into data, data never reaches into presentation — plus one test asserting the source walk is not empty, so the other five cannot pass vacuously |
 
-### Anchorage Harbor — 309 tests
+### Anchorage Harbor — 321 tests
 
 | File | Tests | Focus |
 | --- | --- | --- |
 | `camera_bloc_test.dart` | 55 | Startup/permissions, lifecycle, zoom, quick-zoom stops, **a pinch past 1x deferring its lens hand-over to the end of the gesture**, focus, **metering lock**, **brightness**, capture, batching, discard, lens selection, flash |
 | `process_upload_queue_test.dart` | 34 | The sync engine, grouped by its six rules — including the bandwidth watchdog: a link that stays under the floor is abandoned and parked, a dip that recovers is not, and neither costs an attempt |
-| `sync_domain_test.dart` | 17 | Retry policy, task state predicates, byte-weighted progress, failure retryability |
+| `sync_domain_test.dart` | 22 | Retry policy, task state predicates, byte-weighted progress, failure retryability |
 | `formatters_test.dart` | 16 | Byte units, throughput, zoom labels, middle-truncated file names, the stem/extension split |
 | `zoom_stop_test.dart` | 12 | The zoom ladder: which stops a sensor earns, and which one is lit |
 | `camera_chrome_test.dart` | 17 | The quick-zoom row, the slider's drag axis, the batch badge, the disabled shutter, and the focus reticle: the metering ring being a whole circle, padlock state, brightness drag, edge clamping |
 | `harbor_toast_test.dart` | 6 | The top toast: where it sits, that it retires itself after 2.5 s, that a failure is given longer, replacement, touch-to-dismiss, and its action |
 | `exposure_range_test.dart` | 13 | Snapping to the sensor's EV grid, and the slider arithmetic |
 | `mock_upload_api_test.dart` | 10 | The four demonstration outcomes, and the server-error ladder |
-| `upload_manager_bloc_test.dart` | 16 | Queue projection, auto-resume on stable link, **the sweep that new work triggers**, **the sweep an elapsed backoff triggers**, **the heartbeat that re-drives parked work when no link event ever comes**, pause/resume, retry, discard, clear |
+| `upload_manager_bloc_test.dart` | 23 | Queue projection, auto-resume on stable link, **the re-arm and sweep when the screen is opened**, **RESUME ALL releasing held rows and rejected ones together**, **the sweep that new work triggers**, **the sweep an elapsed backoff triggers**, **the heartbeat that re-drives parked work when no link event ever comes**, pause/resume, retry, discard, clear |
 | `zoom_range_test.dart` | 13 | The 0.5x - 8x band: the product ceiling, the optical floor, and degrading safely |
 | `zoom_span_test.dart` | 17 | The same band across *every* rear camera: effective versus sensor zoom, which lens delivers a given value, the hysteresis at the hand-over, and never switching to a longer lens on its own |
 | `bandwidth_policy_test.dart` | 8 | What "too slow to be worth using" means: the floor, the grace window, and a brief dip that is not a collapse |

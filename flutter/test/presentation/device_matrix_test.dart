@@ -163,6 +163,8 @@ void main() {
             pauseAll: PauseAllUploads(queue),
             resumeAll:
                 ResumeAllUploads(repository: queue, scheduler: scheduler),
+            retryFailed:
+                RetryFailedUploads(repository: queue, scheduler: scheduler),
             retryUpload: RetryUpload(repository: queue, scheduler: scheduler),
             discardUpload: DiscardUpload(queue),
             clearSynced: ClearSyncedUploads(queue),

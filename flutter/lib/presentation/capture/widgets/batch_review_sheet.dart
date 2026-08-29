@@ -207,6 +207,16 @@ class _ShotGrid extends StatelessWidget {
                     child: Image.file(
                       File(shot.filePath),
                       fit: BoxFit.cover,
+                      // One of these per shot in the batch. Full-resolution
+                      // decodes here are what an out-of-memory kill is made
+                      // of - see [thumbnailCacheWidth].
+                      // Four across, so a tile is never wider than a quarter of the
+                      // sheet - a safe upper bound without threading the
+                      // grid's geometry down here.
+                      cacheWidth: thumbnailCacheWidth(
+                        context,
+                        MediaQuery.sizeOf(context).width / 4,
+                      ),
                       errorBuilder: (_, _, _) => ColoredBox(
                         color: colors.card,
                         child: Icon(

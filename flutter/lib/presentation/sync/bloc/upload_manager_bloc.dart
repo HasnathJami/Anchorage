@@ -23,6 +23,16 @@ final class UploadManagerStarted extends UploadManagerEvent {
   const UploadManagerStarted();
 }
 
+/// The Upload Manager screen came on screen.
+///
+/// Separate from [UploadManagerStarted] because the Bloc outlives the screen:
+/// it is hoisted above the navigator so the engine keeps working while the
+/// user is on the camera, so "the app started" happens once and "the user
+/// opened the queue" happens every time they walk over to look at it.
+final class UploadManagerOpened extends UploadManagerEvent {
+  const UploadManagerOpened();
+}
+
 /// Internal: the queue changed.
 final class UploadQueueUpdated extends UploadManagerEvent {
   const UploadQueueUpdated(this.snapshot);
@@ -171,6 +181,8 @@ class UploadManagerState extends Equatable {
 ///  5. **While work is parked and the link says it is usable.** (2) fires on a
 ///     *transition*, and the transition does not always come — see
 ///     [_scheduleParkedRetry].
+///  6. **When the Upload Manager is opened**, which also re-arms the rows that
+///     had given up — see [_onOpened].
 ///
 /// Only (2) existed at first. The rest are why the engine now looks as
 /// resilient as it actually is.
@@ -181,6 +193,7 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
     required ConnectivityPort connectivity,
     required PauseAllUploads pauseAll,
     required ResumeAllUploads resumeAll,
+    required RetryFailedUploads retryFailed,
     required RetryUpload retryUpload,
     required DiscardUpload discardUpload,
     required ClearSyncedUploads clearSynced,
@@ -192,12 +205,14 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
         _connectivity = connectivity,
         _pauseAll = pauseAll,
         _resumeAll = resumeAll,
+        _retryFailed = retryFailed,
         _retryUpload = retryUpload,
         _discardUpload = discardUpload,
         _clearSynced = clearSynced,
         _clock = clock,
         super(const UploadManagerState()) {
     on<UploadManagerStarted>(_onStarted, transformer: droppable());
+    on<UploadManagerOpened>(_onOpened, transformer: droppable());
     on<UploadQueueUpdated>(_onQueueUpdated);
     on<UploadLinkChanged>(_onLinkChanged, transformer: sequential());
     on<UploadSyncRequested>(_onSyncRequested, transformer: droppable());
@@ -213,6 +228,7 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
   final ConnectivityPort _connectivity;
   final PauseAllUploads _pauseAll;
   final ResumeAllUploads _resumeAll;
+  final RetryFailedUploads _retryFailed;
   final RetryUpload _retryUpload;
   final DiscardUpload _discardUpload;
   final ClearSyncedUploads _clearSynced;
@@ -233,7 +249,24 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
   /// enough that a genuinely dead link is not hammered.
   static const Duration defaultParkedRetryInterval = Duration(seconds: 20);
 
+  /// The longest the heartbeat is allowed to stretch to.
+  ///
+  /// A captive portal, or a link that reports itself usable and carries
+  /// nothing, parks the queue and keeps parking it. At a flat twenty seconds
+  /// that is three full sweeps a minute - each one a claim, a transfer attempt
+  /// and a row of writes - for as long as the app is open. That is a phone
+  /// getting warm in someone's hand for no delivered bytes.
+  static const Duration maxParkedRetryInterval = Duration(minutes: 5);
+
   final Duration _parkedRetryInterval;
+
+  /// Consecutive heartbeats that have delivered nothing.
+  ///
+  /// Doubles the wait each time, up to [maxParkedRetryInterval], and resets
+  /// the moment anything actually syncs or the link changes for the better.
+  /// The first retry is still prompt, which is the one the user is watching
+  /// for; it is the twentieth that has earned a longer wait.
+  int _fruitlessHeartbeats = 0;
 
   Future<void> _onStarted(
     UploadManagerStarted event,
@@ -248,6 +281,33 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
     _linkSubscription = _connectivity.watch().listen(
       (LinkStatus status) => add(UploadLinkChanged(status)),
     );
+
+    add(const UploadSyncRequested(automatic: true));
+  }
+
+  /// The Upload Manager came on screen.
+  ///
+  /// Distinct from [UploadManagerStarted], which fires once when the app does:
+  /// this Bloc is hoisted above the navigator so the engine keeps running
+  /// while the user is on the camera, and the *screen* opens and closes many
+  /// times over that one lifetime.
+  ///
+  /// Opening it is a person coming to look at the queue, so it is treated as
+  /// "try all of this again": rows that had given up get a fresh budget, and
+  /// then the queue is swept. The answer to "why is that row still sitting
+  /// there" should never be "because you have to tap it".
+  Future<void> _onOpened(
+    UploadManagerOpened event,
+    Emitter<UploadManagerState> emit,
+  ) async {
+    // A person came to look, so the heartbeat starts from prompt again - they
+    // should not wait out a five-minute backoff that built up while they were
+    // on the camera.
+    _fruitlessHeartbeats = 0;
+
+    // Before the sweep, so the sweep finds them. Rows whose file has gone are
+    // left alone - see [RetryFailedUploads].
+    await _retryFailed();
 
     add(const UploadSyncRequested(automatic: true));
   }
@@ -306,11 +366,23 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
     if (!anyParked) return;
 
     _parkedRetryWake = Timer(
-      _parkedRetryInterval,
+      _backoffForParked(),
       () {
-        if (!isClosed) add(const UploadSyncRequested(automatic: true));
+        if (isClosed) return;
+        _fruitlessHeartbeats++;
+        add(const UploadSyncRequested(automatic: true));
       },
     );
+  }
+
+  /// The heartbeat interval, doubling while nothing gets through.
+  Duration _backoffForParked() {
+    final int millis = _parkedRetryInterval.inMilliseconds *
+        (1 << _fruitlessHeartbeats.clamp(0, 8));
+
+    return millis >= maxParkedRetryInterval.inMilliseconds
+        ? maxParkedRetryInterval
+        : Duration(milliseconds: millis);
   }
 
   /// Whether a sweep started right now would actually do something.
@@ -384,6 +456,11 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
     final bool becameStable =
         event.status.quality.canTransfer && !previous.canTransfer;
 
+    // A link that has just come back is a genuinely new situation, so the
+    // parked heartbeat starts from prompt again rather than from wherever it
+    // had backed off to.
+    if (becameStable) _fruitlessHeartbeats = 0;
+
     if (becameStable && !state.isPaused && state.pendingCount > 0) {
       add(const UploadSyncRequested(automatic: true));
     }
@@ -397,6 +474,12 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
 
     emit(state.copyWith(isSweeping: true));
     final report = await _processQueue();
+
+    // Anything delivered means the situation has changed, so the parked
+    // heartbeat goes back to being prompt. Only a run of sweeps that achieve
+    // nothing at all is allowed to stretch the interval out.
+    if ((report.valueOrNull?.succeeded ?? 0) > 0) _fruitlessHeartbeats = 0;
+
     emit(
       state.copyWith(
         isSweeping: false,
@@ -417,6 +500,7 @@ class UploadManagerBloc extends Bloc<UploadManagerEvent, UploadManagerState> {
     UploadResumeAllRequested event,
     Emitter<UploadManagerState> emit,
   ) async {
+    _fruitlessHeartbeats = 0;
     await _resumeAll();
     emit(state.copyWith(isPaused: false));
     add(const UploadSyncRequested());

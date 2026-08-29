@@ -82,8 +82,15 @@ class QueueSnapshot {
       .where((UploadTask task) => task.status != UploadStatus.synced)
       .length;
 
+  /// Whether the queue is being *held*, which is not the same as having
+  /// nothing left to do.
+  ///
+  /// Both halves are needed. "Every task is paused or finished" alone was true
+  /// of a queue where everything had been delivered, so a fully synced list
+  /// offered **RESUME ALL** - a button naming a state the user was not in, for
+  /// work that did not exist. At least one row has to actually be held.
   bool get isPaused =>
-      tasks.isNotEmpty &&
+      tasks.any((UploadTask task) => task.status == UploadStatus.paused) &&
       tasks.every(
         (UploadTask task) =>
             task.status == UploadStatus.paused || task.status.isTerminal,
@@ -100,6 +107,14 @@ class PauseAllUploads {
 }
 
 /// Releases held tasks back into the queue and asks for a sweep.
+///
+/// **Rows that gave up are re-armed too.** `RESUME ALL` reads, to the person
+/// pressing it, as "get on with all of it" - and a list that still shows
+/// `REJECTED BY SERVER` after they pressed it has not obeyed. Releasing only
+/// the paused rows was the literal reading of the button and the wrong one.
+///
+/// The exception is the same as everywhere else: a row whose file has gone is
+/// left where it is, because no amount of resuming will find it.
 class ResumeAllUploads {
   const ResumeAllUploads({
     required UploadQueueRepository repository,
@@ -112,8 +127,45 @@ class ResumeAllUploads {
 
   Future<Result<void>> call() async {
     final Result<void> result = await _repository.resumeAll();
-    if (result.isSuccess) {
-      await _scheduler.requestSyncWhenConnected(reason: 'user resumed');
+    if (result.isFailure) return result;
+
+    // Best effort, and deliberately not fatal: releasing the held rows is the
+    // button's core promise and must not be undone because re-arming the
+    // failed ones did not work.
+    await _repository.retryFailed();
+
+    await _scheduler.requestSyncWhenConnected(reason: 'user resumed');
+    return result;
+  }
+}
+
+/// Gives every recoverable failure a fresh budget, in one go.
+///
+/// The brief asks for uploads to resume without user intervention, and the
+/// engine does that for everything it still considers *live*. A row that has
+/// spent its attempts is deliberately not live - that is what an attempt
+/// ceiling is for - so without this it sat at `FAILED` until someone pressed
+/// Retry on it, even once the thing that had been failing was fixed.
+///
+/// Opening the Upload Manager is the intervention. It is a person deliberately
+/// coming to look at the queue, and treating that as "try everything again" is
+/// both what they expect and cheaper than making them tap each row.
+class RetryFailedUploads {
+  const RetryFailedUploads({
+    required UploadQueueRepository repository,
+    required BackgroundSchedulerPort scheduler,
+  })  : _repository = repository,
+        _scheduler = scheduler;
+
+  final UploadQueueRepository _repository;
+  final BackgroundSchedulerPort _scheduler;
+
+  /// Returns how many rows were given another go.
+  Future<Result<int>> call() async {
+    final Result<int> result = await _repository.retryFailed();
+
+    if ((result.valueOrNull ?? 0) > 0) {
+      await _scheduler.requestSyncWhenConnected(reason: 'upload manager opened');
     }
     return result;
   }

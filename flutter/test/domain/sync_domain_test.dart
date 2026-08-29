@@ -3,12 +3,64 @@ import 'dart:math';
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/entities/batch_progress.dart';
 import 'package:anchorage_harbor/domain/entities/retry_policy.dart';
+import 'package:anchorage_harbor/domain/usecases/sync_use_cases.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fakes.dart';
 
 void main() {
+  group('a queue that is being held', () {
+    QueueSnapshot snapshotOf(List<UploadTask> tasks) =>
+        QueueSnapshot(tasks: tasks, progress: BatchProgress.from(tasks));
+
+    test('a queue with a held row is paused', () {
+      expect(
+        snapshotOf(<UploadTask>[
+          taskFixture(id: 'a', status: UploadStatus.paused),
+          taskFixture(id: 'b', status: UploadStatus.synced),
+        ]).isPaused,
+        isTrue,
+      );
+    });
+
+    test('a queue where everything has been delivered is not', () {
+      // It used to be, and the header offered RESUME ALL over a finished list
+      // - a button naming a state the user was not in, for work that did not
+      // exist.
+      expect(
+        snapshotOf(<UploadTask>[
+          taskFixture(id: 'a', status: UploadStatus.synced),
+          taskFixture(id: 'b', status: UploadStatus.synced),
+        ]).isPaused,
+        isFalse,
+      );
+    });
+
+    test('a queue that gave up is not paused either', () {
+      expect(
+        snapshotOf(<UploadTask>[
+          taskFixture(id: 'a', status: UploadStatus.failed),
+        ]).isPaused,
+        isFalse,
+      );
+    });
+
+    test('one live row is enough to say the queue is not held', () {
+      expect(
+        snapshotOf(<UploadTask>[
+          taskFixture(id: 'a', status: UploadStatus.paused),
+          taskFixture(id: 'b', status: UploadStatus.queued),
+        ]).isPaused,
+        isFalse,
+      );
+    });
+
+    test('an empty queue is not paused', () {
+      expect(snapshotOf(<UploadTask>[]).isPaused, isFalse);
+    });
+  });
+
   group('RetryPolicy', () {
     const RetryPolicy policy = RetryPolicy(
       baseDelay: Duration(seconds: 4),

@@ -497,7 +497,7 @@ over pure domain code, with fakes standing in for hardware.
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
-| `flutter` | 309 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (17), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the five sweep triggers (16), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
+| `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
 | **Total** | **347** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
@@ -505,7 +505,7 @@ require a device or emulator.
 
 ```bash
 cd android  && ./gradlew test        # 129 tests
-cd ../flutter && flutter test        # 309 tests
+cd ../flutter && flutter test        # 321 tests
 ```
 
 Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.

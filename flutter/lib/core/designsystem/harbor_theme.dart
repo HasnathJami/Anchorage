@@ -178,6 +178,26 @@ abstract final class HarborTheme {
   }
 }
 
+/// How many device pixels wide to decode a thumbnail at.
+///
+/// **This is the difference between a working app and an out-of-memory crash.**
+/// `Image.file` decodes at the file's own resolution unless it is told
+/// otherwise, and these files are camera captures: a 12 MP JPEG becomes about
+/// 48 MB of raw bitmap the moment it is decoded, whether it is painted across
+/// the screen or into a 54 dp square.
+///
+/// The Upload Manager draws one per row and the batch review sheet draws one
+/// per shot, so a dozen frames is half a gigabyte of bitmaps for a few hundred
+/// dp of thumbnails. On a mid-range phone that is an OOM kill; on a good one it
+/// is constant decode-and-evict churn against Flutter's 100 MB image cache,
+/// which is the app getting hot in the user's hand.
+///
+/// Decoding to the size actually being painted costs a hundredth of that and
+/// looks identical. The device pixel ratio is included because a 54 dp box on a
+/// 3x screen genuinely needs 162 pixels; anything less is a blurry thumbnail.
+int thumbnailCacheWidth(BuildContext context, double logicalWidth) =>
+    (logicalWidth * MediaQuery.devicePixelRatioOf(context)).round();
+
 /// `context.harborColors` / `context.harborText` - shorter than the
 /// `Theme.of(context).extension<...>()!` incantation at every call site.
 extension HarborThemeAccess on BuildContext {

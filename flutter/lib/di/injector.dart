@@ -120,6 +120,12 @@ abstract final class Injector {
           scheduler: getIt<BackgroundSchedulerPort>(),
         ),
       )
+      ..registerLazySingleton<RetryFailedUploads>(
+        () => RetryFailedUploads(
+          repository: getIt<UploadQueueRepository>(),
+          scheduler: getIt<BackgroundSchedulerPort>(),
+        ),
+      )
       ..registerLazySingleton<RetryUpload>(
         () => RetryUpload(
           repository: getIt<UploadQueueRepository>(),

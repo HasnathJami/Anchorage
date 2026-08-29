@@ -38,6 +38,7 @@ class AnchorageHarborApp extends StatelessWidget {
         connectivity: getIt<ConnectivityPort>(),
         pauseAll: getIt<PauseAllUploads>(),
         resumeAll: getIt<ResumeAllUploads>(),
+        retryFailed: getIt<RetryFailedUploads>(),
         retryUpload: getIt<RetryUpload>(),
         discardUpload: getIt<DiscardUpload>(),
         clearSynced: getIt<ClearSyncedUploads>(),

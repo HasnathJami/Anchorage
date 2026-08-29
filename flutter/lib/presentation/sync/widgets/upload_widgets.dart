@@ -79,13 +79,23 @@ class BatchProgressHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          // The eyebrow yields and the number does not. Eyebrow type carries
+          // +1.6 of tracking, so this row is tighter than it looks: at a large
+          // text scale, and a percentage that has gone to three digits, it
+          // overflowed. The read-out is the information; the label beside it
+          // is decoration that can afford an ellipsis.
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text(
-                'BATCH SYNC PROGRESS',
-                style: text.eyebrow.copyWith(color: colors.textSecondary),
+              Flexible(
+                child: Text(
+                  'BATCH SYNC PROGRESS',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.eyebrow.copyWith(color: colors.textSecondary),
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: HarborSpacing.sm),
               Text(
                 '${progress.percent}%',
                 style: text.numeric.copyWith(color: colors.textSecondary),
@@ -279,6 +289,8 @@ class _Thumbnail extends StatelessWidget {
       child: Image.file(
         File(task.filePath),
         fit: BoxFit.cover,
+        // One per row, and the queue is a list. See [thumbnailCacheWidth].
+        cacheWidth: thumbnailCacheWidth(context, 54),
         // The file can legitimately be gone (the OS cleared it, the user wiped
         // storage). A placeholder is correct here; the engine reports the same
         // condition as a terminal `MissingArtifactFailure`.

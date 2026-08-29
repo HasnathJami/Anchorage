@@ -17,8 +17,22 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 /// or not anyone is looking - and a prominent manual trigger would imply
 /// otherwise. Manual controls exist (pause, per-item retry) but as secondary
 /// affordances.
-class UploadManagerPage extends StatelessWidget {
+class UploadManagerPage extends StatefulWidget {
   const UploadManagerPage({super.key});
+
+  @override
+  State<UploadManagerPage> createState() => _UploadManagerPageState();
+}
+
+class _UploadManagerPageState extends State<UploadManagerPage> {
+  @override
+  void initState() {
+    super.initState();
+    // Stateful for exactly this. The Bloc is hoisted above the navigator, so
+    // it cannot tell that the user has walked over to look at the queue -
+    // and that visit is what re-arms the rows that had given up and sweeps.
+    context.read<UploadManagerBloc>().add(const UploadManagerOpened());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,19 +85,20 @@ class _TitleRow extends StatelessWidget {
 
     return Container(
       color: colors.panel,
+      // Symmetric padding now that the leading icon has gone. It used to be
+      // tight on the left to sit under an [IconButton]'s own 8 dp.
       padding: const EdgeInsets.fromLTRB(
-        HarborSpacing.xs,
-        HarborSpacing.xs,
         HarborSpacing.md,
-        HarborSpacing.xs,
+        HarborSpacing.sm,
+        HarborSpacing.md,
+        HarborSpacing.sm,
       ),
+      // No back arrow. The system back gesture already leaves this screen, and
+      // the bottom of the page carries START NEW UPLOAD BATCH, which is the
+      // way back to the camera that the user actually wants - a second, weaker
+      // exit in the corner was two answers to one question.
       child: Row(
         children: <Widget>[
-          IconButton(
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: Icon(Icons.arrow_back, color: colors.textPrimary, size: 20),
-            tooltip: 'Back to camera',
-          ),
           // Expanded rather than a Spacer: the title, the sweep spinner and the
           // link chip together fill the width on a 320 dp phone, and at a large
           // system text scale they exceed it. The title is the part that can

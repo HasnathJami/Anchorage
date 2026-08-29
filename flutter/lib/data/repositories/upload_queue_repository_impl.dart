@@ -281,6 +281,46 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
       );
 
   @override
+  Future<Result<int>> retryFailed() async {
+    final Result<int> result = await guard<int>(
+      () async {
+        final Database db = await _database.open();
+        return db.update(
+          UploadQueueColumns.table,
+          <String, Object?>{
+            UploadQueueColumns.status: UploadStatus.queued.name,
+            // The same fresh budget a manual retry grants, for the same
+            // reason: opening the Upload Manager is a person saying "get on
+            // with it", and the exhausted counter belonged to conditions that
+            // may well have changed since.
+            UploadQueueColumns.attempt: 0,
+            UploadQueueColumns.nextAttemptAt: null,
+            UploadQueueColumns.failureKind: UploadFailureKind.none.name,
+            UploadQueueColumns.bytesTransferred: 0,
+            UploadQueueColumns.claimedAt: null,
+          },
+          // Only rows that gave up, and only where trying again could work. A
+          // missing file is gone; `paused` is not in this set at all, because
+          // the user put it there.
+          where: '${UploadQueueColumns.status} = ? '
+              'AND ${UploadQueueColumns.failureKind} != ?',
+          whereArgs: <Object?>[
+            UploadStatus.failed.name,
+            UploadFailureKind.missingFile.name,
+          ],
+        );
+      },
+      onError: (Object error, StackTrace _) => StorageWriteFailure(cause: error),
+    );
+
+    // Only when something actually moved. An unconditional notify here plus
+    // "sweep when the queue changes" is the infinite loop this codebase has
+    // already been bitten by once.
+    if ((result.valueOrNull ?? 0) > 0) await _notify();
+    return result;
+  }
+
+  @override
   Future<Result<void>> remove(String id) async {
     final Result<void> result = await guard<void>(
       () async {

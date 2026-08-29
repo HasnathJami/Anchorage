@@ -371,6 +371,35 @@ resilience:
 
 Switching is one line in `injector.dart`.
 
+### Coming back to a queue that gave up
+
+An attempt ceiling means some rows end at `FAILED`, and that is the point of having one: a
+server rejecting every attempt should stop being asked. But *terminal* was being read as
+*permanent*, and it is not. Set the mock to `FAILED`, watch the rows climb to
+`REJECTED BY SERVER`, set it back to `SUCCESS` — and nothing happened until each row was
+retried by hand. The cause had been fixed and the queue did not know.
+
+Two things now say "try all of that again", and both are a person deliberately asking:
+
+| Trigger | Why it counts |
+| --- | --- |
+| **Opening the Upload Manager** (`UploadManagerOpened`) | Walking over to look at the queue is the intervention. The answer to "why is that row still sitting there" should never be "because you have to tap it". |
+| **`RESUME ALL`** | It reads, to the person pressing it, as *get on with all of it*. A list still showing `REJECTED BY SERVER` afterwards has not obeyed. Releasing only the paused rows was the literal reading of the button and the wrong one. |
+
+Both call `RetryFailedUploads`, which gives the row the same fresh budget a manual per-row
+retry does, and then the queue is swept. Two exclusions, and both matter:
+
+* **A row whose file is gone is never re-armed.** `MissingArtifactFailure` is the one failure
+  no amount of asking can fix, and re-queueing it would put a row in the list that can only
+  fail again — the difference between "we will keep trying" and "we are wasting your battery".
+* **A paused row is never quietly released.** Pause is an instruction from the user, and
+  opening a screen does not countermand it.
+
+`UploadManagerOpened` is a separate event from `UploadManagerStarted` because the Bloc is
+**hoisted above the navigator** — the engine keeps working while the user is on the camera, so
+the app starts once and the screen opens many times over that one lifetime. The page is a
+`StatefulWidget` for exactly this reason, and nothing else.
+
 ### The in-app switcher
 
 **Two** chips inside the camera's settings sheet change the mock's behaviour at runtime:

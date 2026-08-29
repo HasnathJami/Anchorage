@@ -35,6 +35,8 @@ void main() {
         connectivity: connectivity,
         pauseAll: PauseAllUploads(repository),
         resumeAll: ResumeAllUploads(repository: repository, scheduler: scheduler),
+        retryFailed:
+            RetryFailedUploads(repository: repository, scheduler: scheduler),
         retryUpload: RetryUpload(repository: repository, scheduler: scheduler),
         discardUpload: DiscardUpload(repository),
         clearSynced: ClearSyncedUploads(repository),
@@ -182,6 +184,200 @@ void main() {
 
     expect(repository.byId('task-1'), isNull);
     await bloc.close();
+  });
+
+  group('opening the Upload Manager', () {
+    // The Bloc is hoisted above the navigator so the engine keeps running
+    // while the user is on the camera. That means "the app started" happens
+    // once and "the user came to look at the queue" happens every time - and
+    // the second is the one that means "try all of this again".
+
+    test('a row that had given up is tried again, with no button pressed',
+        () async {
+      // The reported bug: with the mock set to FAILED the rows climb to
+      // REJECTED BY SERVER, and then setting it back to SUCCESS did nothing
+      // until each row was retried by hand.
+      final UploadManagerBloc bloc = buildBloc();
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+
+      await repository.enqueueAll(<UploadTask>[
+        taskFixture(id: 'rejected', status: UploadStatus.failed, attempt: 3),
+      ]);
+      await settle();
+      expect(repository.byId('rejected')?.status, UploadStatus.failed,
+          reason: 'terminal until someone comes to look');
+
+      bloc.add(const UploadManagerOpened());
+      await settle();
+
+      expect(repository.byId('rejected')?.status, UploadStatus.synced);
+      await bloc.close();
+    });
+
+    test('it gets a fresh budget, not the exhausted one', () async {
+      final UploadManagerBloc bloc = buildBloc();
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+
+      uploader.script('rejected', <Failure?>[const ServerFailure(500)]);
+      await repository.enqueueAll(<UploadTask>[
+        taskFixture(id: 'rejected', status: UploadStatus.failed, attempt: 3),
+      ]);
+      await settle();
+
+      bloc.add(const UploadManagerOpened());
+      await settle();
+
+      // One failure spent out of a budget that starts again at zero, so the
+      // row is retrying rather than straight back to failed.
+      expect(repository.byId('rejected')?.attempt, 1);
+      expect(repository.byId('rejected')?.status, UploadStatus.retrying);
+      await bloc.close();
+    });
+
+    test('a file that is gone is left where it is', () async {
+      // The one failure no amount of coming to look at it can fix. Re-queueing
+      // it would put a row in the list that can only fail again.
+      final UploadManagerBloc bloc = buildBloc();
+      bloc.add(const UploadManagerStarted());
+      await settle();
+
+      await repository.enqueueAll(<UploadTask>[
+        taskFixture(id: 'gone', status: UploadStatus.failed, attempt: 3),
+      ]);
+      await repository.markAttemptFailed(
+        'gone',
+        attempt: 3,
+        status: UploadStatus.failed,
+        failureKind: UploadFailureKind.missingFile,
+      );
+      await settle();
+
+      bloc.add(const UploadManagerOpened());
+      await settle();
+
+      expect(repository.byId('gone')?.status, UploadStatus.failed);
+      await bloc.close();
+    });
+
+    test('a row the user paused is not quietly released', () async {
+      // Pause is an instruction. Coming to look at the queue does not
+      // countermand it.
+      connectivity.quality = LinkQuality.offline;
+      await repository.enqueueAll(<UploadTask>[taskFixture(id: 'held')]);
+
+      final UploadManagerBloc bloc = buildBloc();
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      bloc.add(const UploadPauseAllRequested());
+      await settle();
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+
+      bloc.add(const UploadManagerOpened());
+      await settle();
+
+      expect(repository.byId('held')?.status, UploadStatus.paused);
+      await bloc.close();
+    });
+  });
+
+  group('a link that says it is usable and carries nothing', () {
+    test('the heartbeat backs off instead of hammering it', () async {
+      // A captive portal, or one bar that reports itself connected. The queue
+      // parks and keeps parking, and at a flat interval that is three full
+      // sweeps a minute for as long as the app is open - a phone getting warm
+      // for no delivered bytes.
+      final UploadManagerBloc bloc = buildBloc(
+        clock: DateTime.now,
+        parkedRetryInterval: const Duration(milliseconds: 100),
+      );
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+
+      uploader.script(
+        'stuck',
+        List<Failure?>.filled(30, const LowBandwidthFailure()),
+      );
+      await repository.enqueueAll(<UploadTask>[taskFixture(id: 'stuck')]);
+      await settle();
+
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      await settle();
+
+      // Flat 100 ms would be nine or so attempts in that window. Doubling
+      // each time - 100, 200, 400, 800 - is four at most.
+      expect(uploader.attemptsFor('stuck'), lessThanOrEqualTo(5),
+          reason: 'the interval has to be stretching, not holding');
+      expect(uploader.attemptsFor('stuck'), greaterThan(1),
+          reason: 'but it must still be trying');
+      await bloc.close();
+    });
+
+    test('one delivered file makes it prompt again', () async {
+      final UploadManagerBloc bloc = buildBloc(
+        clock: DateTime.now,
+        parkedRetryInterval: const Duration(milliseconds: 100),
+      );
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+
+      // Fails twice, so the heartbeat has started to stretch, then succeeds.
+      uploader.script('stuck', <Failure?>[
+        const LowBandwidthFailure(),
+        const LowBandwidthFailure(),
+      ]);
+      await repository.enqueueAll(<UploadTask>[taskFixture(id: 'stuck')]);
+      await settle();
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      await settle();
+
+      expect(repository.byId('stuck')?.status, UploadStatus.synced);
+
+      // A second file must not inherit the backoff the first one earned.
+      await repository.enqueueAll(<UploadTask>[taskFixture(id: 'fresh')]);
+      await settle();
+
+      expect(repository.byId('fresh')?.status, UploadStatus.synced);
+      await bloc.close();
+    });
+  });
+
+  group('RESUME ALL', () {
+    test('releases the held rows and re-arms the rejected ones together',
+        () async {
+      // "Get on with all of it" is what the button says to the person pressing
+      // it. A list still showing REJECTED BY SERVER afterwards has not obeyed.
+      connectivity.quality = LinkQuality.offline;
+      await repository.enqueueAll(<UploadTask>[
+        taskFixture(id: 'held'),
+        taskFixture(id: 'rejected', status: UploadStatus.failed, attempt: 3),
+      ]);
+
+      final UploadManagerBloc bloc = buildBloc();
+      bloc.add(const UploadManagerStarted());
+      await settle();
+      bloc.add(const UploadPauseAllRequested());
+      await settle();
+
+      connectivity.emit(LinkQuality.stable);
+      await settle();
+      bloc.add(const UploadResumeAllRequested());
+      await settle();
+
+      expect(repository.byId('held')?.status, UploadStatus.synced);
+      expect(repository.byId('rejected')?.status, UploadStatus.synced);
+      await bloc.close();
+    });
   });
 
   group('sweeps nobody asked for', () {

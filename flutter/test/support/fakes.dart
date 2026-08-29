@@ -221,6 +221,28 @@ class FakeUploadQueueRepository implements UploadQueueRepository {
       );
 
   @override
+  Future<Result<int>> retryFailed() async {
+    final List<UploadTask> recoverable = _tasks.values
+        .where((UploadTask task) =>
+            task.status == UploadStatus.failed &&
+            task.lastFailureKind != UploadFailureKind.missingFile)
+        .toList(growable: false);
+
+    for (final UploadTask task in recoverable) {
+      _tasks[task.id] = task.copyWith(
+        status: UploadStatus.queued,
+        attempt: 0,
+        clearNextAttemptAt: true,
+        lastFailureKind: UploadFailureKind.none,
+        bytesTransferred: 0,
+      );
+    }
+
+    if (recoverable.isNotEmpty) _emit();
+    return Result<int>.success(recoverable.length);
+  }
+
+  @override
   Future<Result<void>> remove(String id) async {
     _tasks.remove(id);
     _emit();

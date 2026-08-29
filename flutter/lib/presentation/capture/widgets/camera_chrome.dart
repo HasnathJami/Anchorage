@@ -450,6 +450,9 @@ class BatchThumbnail extends StatelessWidget {
                     : Image.file(
                         File(latestPath!),
                         fit: BoxFit.cover,
+                        // Decoded at the size it is drawn, not the size it was
+                        // shot at - see [thumbnailCacheWidth].
+                        cacheWidth: thumbnailCacheWidth(context, _side),
                         // A thumbnail that fails to decode must not take the
                         // camera screen down with it.
                         errorBuilder: (_, _, _) => const Icon(

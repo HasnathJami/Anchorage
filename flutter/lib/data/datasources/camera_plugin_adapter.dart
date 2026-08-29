@@ -82,6 +82,14 @@ class CameraPluginAdapter implements CameraPort {
   Future<Result<CameraSession>> selectLens(CameraLens lens) => _open(lens);
 
   Future<Result<CameraSession>> _open(CameraLens lens) async {
+    // `firstWhere(..., orElse: () => _descriptions.first)` below throws a bare
+    // StateError on an empty list, and this class's whole contract is that it
+    // never throws. Nothing reaches here before [initialise] today, but a
+    // latent crash guarded by call-order is a crash waiting for a refactor.
+    if (_descriptions.isEmpty) {
+      return const Result<CameraSession>.failure(CameraUnavailableFailure());
+    }
+
     try {
       // Dispose first: holding two controllers open is the fastest way to a
       // "camera in use" error on mid-range Android hardware.
@@ -151,6 +159,17 @@ class CameraPluginAdapter implements CameraPort {
       );
     } on CameraException catch (error, stackTrace) {
       return Result<CameraSession>.failure(_translate(error, 'selectLens', stackTrace));
+    } catch (error) {
+      // Opening a sensor crosses a platform channel into vendor code, and the
+      // things that come back from mid-range Android hardware are not all
+      // `CameraException`s - a `PlatformException` from a busy camera service
+      // and a `StateError` from a plugin that lost its controller both happen.
+      // [initialise] already catches broadly; this path had only the narrow
+      // one, so a lens switch could throw straight through the port and take
+      // the app with it.
+      return Result<CameraSession>.failure(
+        CameraUnavailableFailure(cause: error),
+      );
     }
   }
 

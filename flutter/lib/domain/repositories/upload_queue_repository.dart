@@ -69,6 +69,18 @@ abstract interface class UploadQueueRepository {
   /// Reset a failed task so the user can try again by hand.
   Future<Result<void>> retry(String id);
 
+  /// Gives every *recoverable* failure a fresh budget, and returns how many
+  /// rows that was.
+  ///
+  /// Rows whose failure no retry can fix are left alone. A file the operating
+  /// system has swept away is not going to come back, and re-queueing it would
+  /// put a row in the list that can only fail again - which is the difference
+  /// between "we will keep trying" and "we are wasting your battery".
+  ///
+  /// Paused rows are untouched too. Pause is a deliberate instruction from the
+  /// user, and this must not quietly countermand it.
+  Future<Result<int>> retryFailed();
+
   Future<Result<void>> remove(String id);
 
   /// Drop everything already delivered - housekeeping after a batch lands.
