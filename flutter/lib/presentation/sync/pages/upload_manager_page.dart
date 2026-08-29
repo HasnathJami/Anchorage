@@ -136,14 +136,25 @@ class _QueueList extends StatelessWidget {
       children: <Widget>[
         Padding(
           padding: const EdgeInsets.only(bottom: HarborSpacing.sm),
+          // Both labels are eyebrow type, which carries +1.6 of tracking, and
+          // together they overflowed a 360 dp phone by 32 dp - every handset
+          // narrower than the one this was designed on, and every handset at
+          // all once the user turns their type size up. The count is the part
+          // that gives: `CLEAR SYNCED` is a control and has to stay whole.
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text(
-                'PENDING UPLOADS (${state.pendingCount})',
-                style: context.harborText.eyebrow.copyWith(color: colors.textSecondary),
+              Flexible(
+                child: Text(
+                  'PENDING UPLOADS (${state.pendingCount})',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: context.harborText.eyebrow
+                      .copyWith(color: colors.textSecondary),
+                ),
               ),
-              const Spacer(),
-              if (state.progress.syncedTasks > 0)
+              if (state.progress.syncedTasks > 0) ...<Widget>[
+                const SizedBox(width: HarborSpacing.sm),
                 GestureDetector(
                   onTap: () => bloc.add(const UploadClearSyncedRequested()),
                   behavior: HitTestBehavior.opaque,
@@ -153,6 +164,7 @@ class _QueueList extends StatelessWidget {
                         .copyWith(color: colors.textTertiary),
                   ),
                 ),
+              ],
             ],
           ),
         ),

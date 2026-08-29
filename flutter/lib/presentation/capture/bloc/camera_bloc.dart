@@ -285,6 +285,11 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     Emitter<CameraState> emit, {
     bool handover = false,
   }) async {
+    // A reticle belongs to a frame on a sensor, and that sensor is about to be
+    // disposed. Left armed, its dwell timer would fire across the switch and
+    // clear the *next* one.
+    _cancelReticleDeadline();
+
     emit(
       state.copyWith(
         phase: CameraPhase.initialising,
@@ -300,6 +305,15 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
           phase: CameraPhase.ready,
           session: session,
           isSwitchingLens: false,
+          // The same rule [_onPaused] obeys, and for the same reason: a lens
+          // switch throws the controller away and builds another, and a fresh
+          // one starts at auto metering and 0 EV. Carrying these across left a
+          // closed padlock drawn over a sensor that was not locked at all -
+          // the inverse of the bug the padlock exists to prevent, and worse,
+          // because the user has been told something untrue.
+          clearFocusPoint: true,
+          isMeteringLocked: false,
+          exposureOffset: 0,
         ),
       ),
       (Failure failure) =>

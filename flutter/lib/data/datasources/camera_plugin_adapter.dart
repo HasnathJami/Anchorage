@@ -202,12 +202,27 @@ class CameraPluginAdapter implements CameraPort {
     return guard<void>(
       () async {
         final Offset offset = Offset(point.x, point.y);
-        // Exposure is set alongside focus deliberately: tapping a dark corner
-        // and getting a sharp but unreadable frame is not what the gesture
-        // means to a user.
-        await controller.setFocusPoint(offset);
-        await controller.setExposurePoint(offset);
+
+        // **Order is the whole of this method.** All three calls used to be
+        // here, in the opposite order, and the reticle appeared over a frame
+        // that never actually refocused:
+        //
+        //  * The mode goes **first**. A sensor left locked by a previous tap
+        //    drops a new point on the floor, and CameraX treats a change of
+        //    focus mode as "cancel whatever run is in progress" - so setting
+        //    it *after* the points cancelled the focus run they had just
+        //    started. Unconditional rather than only-when-locked, because the
+        //    platform can lock itself at the end of an earlier action.
+        //  * Exposure goes before focus, so the focus run is the one left
+        //    standing when both have been asked for. This is the order the
+        //    plugin's own reference implementation uses.
+        //
+        // Exposure is metered at the same point deliberately: tapping a dark
+        // corner and getting a sharp but unreadable frame is not what the
+        // gesture means to a user.
         await controller.setFocusMode(FocusMode.auto);
+        await controller.setExposurePoint(offset);
+        await controller.setFocusPoint(offset);
       },
       onError: (Object error, StackTrace stackTrace) =>
           CameraOperationFailure('focusAt', cause: error),

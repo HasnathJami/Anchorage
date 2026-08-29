@@ -268,11 +268,20 @@ class _PreviewSurface extends StatelessWidget {
         // the point it names on the sensor are not the same point. See
         // [PreviewCrop] - without this, tap-to-focus focused somewhere the
         // user did not touch, by more the further from centre they tapped.
-        final Size source = _previewChildSize(controller);
-        final PreviewCrop crop = PreviewCrop.of(
-          sourceAspect: source.width / source.height,
-          viewportAspect: size.width / size.height,
-        );
+        //
+        // Built from the size the controller actually reported, never from
+        // the placeholder [_previewChildSize] falls back to: a fabricated
+        // shape would map taps confidently and wrongly for the moment before
+        // the real one arrives. No reported size means no crop.
+        final Size? reported = controller?.value.previewSize;
+        final PreviewCrop crop = reported == null
+            ? PreviewCrop.none
+            : PreviewCrop.of(
+                // Axes swapped, as in [_previewChildSize]: a portrait preview
+                // reports its size in the sensor's own landscape orientation.
+                sourceAspect: reported.height / reported.width,
+                viewportAspect: size.width / size.height,
+              );
 
         return Stack(
           fit: StackFit.expand,
@@ -732,14 +741,24 @@ class _UploadBatchButton extends StatelessWidget {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
               )
+            // `mainAxisSize.min` plus a flexible label: the button is as wide
+            // as the screen, but its *contents* are laid out at their natural
+            // size, and at 1.3x type the anchor, the gap and the label were
+            // 2 dp too wide for it. A call to action that paints a yellow and
+            // black overflow bar is worse than one that ellipsises.
             : Row(
+                mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: <Widget>[
                   const Icon(Icons.anchor, size: 18),
                   const SizedBox(width: 10),
-                  Text(
-                    count > 0 ? 'UPLOAD BATCH ($count)' : 'UPLOAD MANAGER',
-                    style: context.harborText.button,
+                  Flexible(
+                    child: Text(
+                      count > 0 ? 'UPLOAD BATCH ($count)' : 'UPLOAD MANAGER',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.harborText.button,
+                    ),
                   ),
                 ],
               ),

@@ -158,6 +158,43 @@ void main() {
     });
   });
 
+  group('the front camera', () {
+    const CameraLens front = CameraLens(
+      id: 'front',
+      zoomFactor: 1,
+      label: 'Front',
+      kind: CameraLensKind.front,
+    );
+
+    /// The rear ladder is what the span is built from, and the front camera is
+    /// not on it - so it arrives as a lens the list does not contain.
+    ZoomSpan frontSpan() => ZoomSpan.across(
+          lenses: const <CameraLens>[ultraWide, main, tele],
+          activeLens: front,
+          activeRange: sensor,
+        );
+
+    test('offers only what the selfie camera itself can do', () {
+      // Not 0.5x. Borrowing the rear ladder would put a wide button on a
+      // camera that has never been able to reach it.
+      expect(frontSpan().offered.min, 1);
+      expect(frontSpan().offered.max, 8);
+    });
+
+    test('never resolves to a camera pointing the other way', () {
+      // The bug this guards: a pinch wider than the selfie camera can manage
+      // opened the rear ultra-wide. The user asked to see more of their own
+      // face and the phone showed them the room behind it.
+      expect(frontSpan().place(0.5).lens, front);
+      expect(frontSpan().place(3).lens, front);
+    });
+
+    test('still zooms within itself', () {
+      expect(frontSpan().place(4).sensorZoom, 4);
+      expect(frontSpan().effectiveOf(2), 2);
+    });
+  });
+
   group('degrading safely', () {
     test('no lenses at all still answers with the open one', () {
       final ZoomSpan span = ZoomSpan.across(

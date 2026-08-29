@@ -197,6 +197,9 @@ rather than blocking mock locations. Match that standard.
 | Momentary messages | `HarborToast` at the **top**, 2.5 s for a confirmation and 4 s for a failure | `SnackBar` only anchors to the bottom, and on the camera the bottom edge is the shutter - the confirmation of a shot covered the button the user was about to press again. |
 | The metering ring | Its `Stack` carries an explicit `width` | A `Stack` sizes itself from its *non-positioned* children, and the ring is positioned - so without the width the 68 dp circle was clipped to the padlock and drew as two disconnected arcs. There is a test. |
 | The ring is **cut** at twelve o'clock | A `CustomPaint` arc with a gap, not a circular `BoxDecoration` | The padlock sits *in* the gap, the way every platform camera app draws it. A stroke running through the middle of a padlock reads as a broken circle with something stuck to it. `FocusReticle.lockGapSweep` derives the gap from the glyph, so it cannot drift out of step with it. |
+| A lens switch clears the reticle, the padlock and the EV offset | Same rule as a pause | `selectLens` disposes the controller and builds another, and a fresh one starts at auto metering and 0 EV. Carrying them across drew a **closed padlock over a sensor that was not locked** - worse than an invisible lock, because the user has been told something untrue. |
+| The zoom span is built around the *open* camera | `ZoomSpan.across` puts the active lens in the bands even when the list does not contain it | The list is the *rear* ladder. Without this the front camera borrowed it, and a pinch on a selfie resolved to the rear ultra-wide and opened it. |
+| Every text row beside a fixed control is `Flexible` with an ellipsis | Enforced by `device_matrix_test.dart` | `PENDING UPLOADS (n)` / `CLEAR SYNCED` overflowed **every phone 360 dp or narrower**, and the upload call to action overflowed at 1.3x type. Eyebrow type carries +1.6 of tracking, so these are tighter than they look. Add a row, add it to the matrix. |
 | Tap-to-focus coordinates | Mapped through `PreviewCrop` in both directions | The preview is painted to **cover**, so a tap on screen and the point it names on the sensor are different points - on a 3:4 preview over a 9:20 screen, 40% of the sensor's width is off-glass. Passing viewport coordinates to `setFocusPoint` focused somewhere the user never touched. The reticle is drawn back out through the same crop so it lands under the finger. |
 | A zoom that needs another camera | Deferred to the end of the gesture, and dispatched as its own `sequential` event | Opening a sensor blanks the preview for a few hundred milliseconds. A pinch emits dozens of values a second, so acting on each crossing of 1.0x reopened the camera over and over - and because the zoom handlers are `restartable`, a `selectLens` could be torn down half way. `CameraZoomHandoverRequested` cannot be cancelled; `CameraZoomGestureEnded` and the settle timer decide when it fires. |
 | A rear-to-rear hand-over | `isSwitchingLens`, and **no** blocking overlay | A cold start has earned a spinner. A hand-over mid-pinch has not - covering the chrome for it is the flicker the deferral exists to remove. |
@@ -230,7 +233,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **136 Android unit tests**, **279 Flutter tests**, plus 5 Compose instrumentation
+Current state: **136 Android unit tests**, **309 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

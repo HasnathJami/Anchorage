@@ -326,6 +326,59 @@ void main() {
     );
   });
 
+  group('switching lens throws the old sensor away', () {
+    // [_onPaused] already clears these, with the note that a new controller
+    // starts at auto metering and 0 EV. A lens switch disposes and rebuilds
+    // the controller in exactly the same way, and used to clear none of them.
+
+    Future<CameraBloc> lockedThenSwitched(CameraBloc bloc) async {
+      bloc.add(const CameraStarted());
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraFocusRequested(x: 0.4, y: 0.6));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraFocusLockToggled());
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraExposureOffsetChanged(1));
+      await Future<void>.delayed(Duration.zero);
+
+      bloc.add(const CameraLensSelected(ultraWideLens));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      return bloc;
+    }
+
+    blocTest<CameraBloc, CameraState>(
+      'a padlock does not survive the sensor it was locked to',
+      // The inverse of the bug the padlock exists to prevent, and worse: a
+      // closed padlock drawn over a camera that is metering freely tells the
+      // user something untrue.
+      build: buildBloc,
+      act: lockedThenSwitched,
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isFalse);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'the reticle does not survive it either',
+      build: buildBloc,
+      act: lockedThenSwitched,
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.focusPoint, isNull,
+            reason: 'it marked a point on a frame from another sensor');
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'and neither does the brightness the user dialled in',
+      build: buildBloc,
+      act: lockedThenSwitched,
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.exposureOffset, 0,
+            reason: 'the new controller is at 0 EV whatever the state says');
+      },
+    );
+  });
+
   group('pinching past what the open camera can show', () {
     // The default fake device is the awkward one, and the common one: two rear
     // cameras, the open one running 1x - 8x of its own zoom, and an ultra-wide

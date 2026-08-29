@@ -79,8 +79,22 @@ class ZoomSpan extends Equatable {
     required CameraLens activeLens,
     required ZoomRange activeRange,
   }) {
+    // The open camera is always one of the bands. [lenses] is the *rear*
+    // ladder, and the front camera is not on it - so when the front camera is
+    // open it is a span of one, and cannot borrow a range that belongs to
+    // sensors pointing the other way.
+    //
+    // Without this, a pinch on a selfie resolved to the rear ultra-wide and
+    // opened it: the user asked to see more of their own face and the phone
+    // showed them the room behind it.
+    final bool activeIsListed =
+        lenses.any((CameraLens lens) => lens.id == activeLens.id);
+
+    final List<CameraLens> usable =
+        activeIsListed ? lenses : <CameraLens>[activeLens];
+
     final List<LensBand> bands = <LensBand>[
-      for (final CameraLens lens in lenses)
+      for (final CameraLens lens in usable)
         // The open lens's range is the one the platform actually reported;
         // every other lens borrows it. See "What is assumed" above.
         LensBand(lens: lens, range: activeRange),
