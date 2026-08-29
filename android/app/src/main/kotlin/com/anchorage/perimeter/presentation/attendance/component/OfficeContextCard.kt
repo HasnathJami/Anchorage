@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.anchorage.perimeter.presentation.attendance.AttendanceFormatters
 import com.anchorage.perimeter.presentation.attendance.AttendanceUiState
 import com.anchorage.perimeter.R
+import androidx.compose.animation.animateContentSize
 import com.anchorage.perimeter.domain.model.AnchorSource
 
 /**
@@ -47,7 +49,13 @@ fun OfficeContextCard(
     val spacing = AnchorageTheme.spacing
     val anchor = state.anchor
 
-    AnchorageCard(modifier = modifier) {
+    // Setting the office adds a whole row to this card, and swapping the
+    // button for a spinner changes its height again. Appearing instantly makes
+    // the card - and everything below it - jump. The user has just pressed a
+    // button; the screen answering with a lurch reads as a glitch rather than
+    // as a result. One modifier smooths every size change the card can make,
+    // which is why it sits here rather than on each of them.
+    AnchorageCard(modifier = modifier.animateContentSize()) {
         SectionEyebrow(
             text = stringResource(R.string.attendance_step_one),
             trailingDotColor = if (anchor != null) colors.primary else colors.outlineSubtle,
@@ -121,7 +129,7 @@ fun OfficeContextCard(
             // The button is replaced rather than merely disabled: a spinner in
             // its place is unambiguous about *why* it cannot be pressed.
             Row(
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center,
             ) {

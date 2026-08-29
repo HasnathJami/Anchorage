@@ -109,6 +109,14 @@ class FakeTracker : LocationTracker {
 
     var currentFixResult: Outcome<LocationFix> = Outcome.Success(fix())
 
+    /**
+     * Whether anything is currently collecting the position stream.
+     *
+     * The stand-in for "is the GPS receiver on". Battery behaviour is not
+     * observable from the UI state, so it is asserted here instead.
+     */
+    val isStreaming: Boolean get() = updates.subscriptionCount.value > 0
+
     suspend fun emit(outcome: Outcome<LocationFix>) = updates.emit(outcome)
 
     override fun stream(intervalMillis: Long): Flow<Outcome<LocationFix>> = updates

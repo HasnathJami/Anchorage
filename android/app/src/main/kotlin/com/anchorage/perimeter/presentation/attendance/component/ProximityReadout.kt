@@ -1,5 +1,8 @@
 package com.anchorage.perimeter.presentation.attendance.component
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -7,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -52,7 +56,30 @@ fun ProximityReadout(
         else -> colors.surface
     }
 
-    val distanceLabel = reading?.let { AttendanceFormatters.distance(it.distanceMeters) }
+    // The arc is tweened over 450 ms because raw GPS jitters by a few metres a
+    // second. The number in the middle of it was not, so the ring glided while
+    // the read-out flickered 120 - 118 - 121 underneath it, which reads as a
+    // broken sensor rather than a live one. Same duration and easing, so the
+    // two move as one thing.
+    //
+    // Animating the *value* and formatting the result - rather than animating
+    // an already-formatted string - is what keeps the "m" / "km" switch and
+    // the locale's number format in one place.
+    val animatedMeters by animateFloatAsState(
+        targetValue = reading?.distanceMeters?.toFloat() ?: 0f,
+        animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
+        label = "dial-distance",
+    )
+
+    val distanceLabel = if (reading != null) {
+        AttendanceFormatters.distance(animatedMeters.toDouble())
+    } else {
+        stringResource(R.string.attendance_dial_unknown)
+    }
+
+    // The spoken value is the real one, not the frame the animation happens to
+    // be on: a screen reader announcing "117 metres" mid-tween would be wrong.
+    val spokenDistance = reading?.let { AttendanceFormatters.distance(it.distanceMeters) }
         ?: stringResource(R.string.attendance_dial_unknown)
 
     val captionLabel = when {
@@ -72,7 +99,7 @@ fun ProximityReadout(
             arcColor = arcColor,
             fillColor = fillColor,
             contentDescription = reading
-                ?.let { stringResource(R.string.attendance_dial_description, distanceLabel) }
+                ?.let { stringResource(R.string.attendance_dial_description, spokenDistance) }
                 ?: stringResource(R.string.attendance_dial_description_unknown),
         )
 

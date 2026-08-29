@@ -58,6 +58,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner as ComposeLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.awaitCancellation
 import com.anchorage.perimeter.R
 import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
 import com.anchorage.perimeter.presentation.common.hasLocationPermission
@@ -128,11 +129,21 @@ fun AttendanceRoute(
     // Re-checking on every resume is what makes the screen recover silently
     // when the user grants permission (or switches location on) in Settings
     // and swipes back.
+    //
+    // The `finally` is not decoration. `repeatOnLifecycle` cancels this block
+    // when the screen leaves RESUMED, and that cancellation is the *only*
+    // signal that the position stream should stop - `viewModelScope` outlives
+    // visibility, so without it the GPS keeps running behind the home screen.
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             viewModel.onIntent(
                 AttendanceIntent.PermissionStateChanged(context.hasLocationPermission()),
             )
+            try {
+                awaitCancellation()
+            } finally {
+                viewModel.onIntent(AttendanceIntent.ScreenStopped)
+            }
         }
     }
 

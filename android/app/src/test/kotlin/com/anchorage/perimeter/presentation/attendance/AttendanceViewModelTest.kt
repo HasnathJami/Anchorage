@@ -118,6 +118,47 @@ class AttendanceViewModelTest {
     }
 
     @Test
+    fun `the position stream stops when the screen leaves the foreground`() =
+        runTest(dispatcher) {
+            // The single most expensive thing this app does. `viewModelScope`
+            // outlives visibility, so gating only on permission left the
+            // receiver running behind the home screen indefinitely.
+            grantPermission()
+            advanceUntilIdle()
+            assertThat(tracker.isStreaming).isTrue()
+
+            viewModel.onIntent(AttendanceIntent.ScreenStopped)
+            advanceUntilIdle()
+
+            assertThat(tracker.isStreaming).isFalse()
+        }
+
+    @Test
+    fun `the position stream comes back when the screen does`() = runTest(dispatcher) {
+        grantPermission()
+        advanceUntilIdle()
+        viewModel.onIntent(AttendanceIntent.ScreenStopped)
+        advanceUntilIdle()
+
+        // What the lifecycle observer sends on the next resume.
+        grantPermission()
+        advanceUntilIdle()
+
+        assertThat(tracker.isStreaming).isTrue()
+    }
+
+    @Test
+    fun `losing permission stops the stream too`() = runTest(dispatcher) {
+        grantPermission()
+        advanceUntilIdle()
+
+        viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
+        advanceUntilIdle()
+
+        assertThat(tracker.isStreaming).isFalse()
+    }
+
+    @Test
     fun `tapping the blocked banner asks the screen to open settings`() = runTest(dispatcher) {
         viewModel.onIntent(
             AttendanceIntent.PermissionResult(granted = false, canAskAgain = false),

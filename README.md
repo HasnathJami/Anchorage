@@ -84,7 +84,7 @@ requires.
 | --- | --- |
 | Button to "Set Office Location" that fetches GPS and saves locally | `OfficePickerRoute` — a map with a draggable perimeter, seeded by `CaptureOfficeAnchorUseCase`’s fix and confirmed by `PlaceOfficeAnchorUseCase` → `OfficeAnchorLocalSource` (DataStore) |
 | "Mark Attendance" enabled only within 50 m | `GeofenceEvaluator` + `AttendanceStatus.canMarkAttendance`; re-validated authoritatively in `MarkAttendanceUseCase` |
-| Real-time distance indicator | `DistanceDial` fed by `ObserveAttendanceStatusUseCase` |
+| Real-time distance indicator | `DistanceDial` fed by `ObserveAttendanceStatusUseCase` — re-measures the moment the office moves, without waiting for the next GPS tick, and animates rather than twitching. See [The distance updates reactively](#the-distance-updates-reactively-and-it-does-not-twitch) |
 | Jetpack Compose UI matching the screenshot | `AttendanceScreen.kt` + `core/designsystem/` |
 | Kotlin Flow state management | Every read path is a `Flow`; the ViewModel exposes `StateFlow<AttendanceUiState>` |
 | Graceful permission and hardware failure handling | `AppError.Location` taxonomy → `AttendanceNotice` → inline banner with a remedy |
@@ -105,6 +105,76 @@ requires.
   recorded check-in.
 * **Window closed** — the caption under the button flips from `AVAILABLE 09:00 AM - 10:30 AM`
   to `WINDOW CLOSED`, in amber.
+
+### The distance updates reactively, and it does not twitch
+
+The brief asks for a *real-time* distance indicator, and "real-time" is where this screen is
+easiest to get subtly wrong. Three things had to be true at once.
+
+**It re-measures the instant the office moves, not on the next GPS tick.**
+`ObserveAttendanceStatusUseCase` fuses three sources — the saved anchor, the position stream
+and today's record — and threads the **last known fix** forward through a `scan`, rather than
+the last finished reading. That distinction is the feature: a *reading* is an answer about
+one particular office, so reusing it after the office moves reports the distance to a
+building the user no longer works in. A *fix* is raw enough to still be true, so the moment
+the anchor changes it can be measured again against the new one. Press "Set Office Location"
+and the dial goes to `0m` immediately, instead of showing `--` (or the old distance) for the
+several seconds until a satellite next answers. Two tests cover exactly this.
+
+**Nothing on screen jumps.** The ring is tweened over 450 ms, because raw GPS jitters by a
+few metres a second and a bare threshold makes the arc visibly twitch. The number in the
+middle of it was *not* tweened, so the ring glided while the read-out flickered 120 → 118 →
+121 underneath it — which reads as a broken sensor rather than a live one. It now animates on
+the same curve and duration, so the two move as one thing. The *value* is animated and then
+formatted, rather than animating a formatted string, which keeps the `m` / `km` switch in one
+place; the accessibility announcement deliberately uses the real number rather than whichever
+frame the tween is on.
+
+**The card grows smoothly.** Anchoring an office adds a whole row to the office card, and
+swapping the button for a spinner changes its height again. Appearing instantly made the card
+— and everything below it — lurch. One `animateContentSize()` on the card smooths every size
+change it can make.
+
+**Hysteresis is applied to the dial only.** Entry at 50 m, exit at 58 m, so a user standing on
+the boundary does not watch the pill strobe between states. The check-in itself uses the true
+50 m with no forgiveness — the display is allowed to be kind, the decision is not.
+
+### Battery, memory and the things that crash on other people's phones
+
+**The GPS stops when the screen does.** This was a real bug, and the most expensive kind: the
+position stream was gated on *permission* alone, and `viewModelScope` outlives visibility, so
+opening Attendance and pressing home left the receiver running at the full update interval,
+indefinitely, for a reading nobody could see. Permission and visibility are different
+questions — the app may read the position, versus it has any reason to — and the stream now
+runs only while both are true. `repeatOnLifecycle(RESUMED)` cancelling its block is the signal
+that the screen has gone; a test asserts the collector count drops to zero.
+
+**Nothing outlives the screen.** `FusedLocationTracker` is a `callbackFlow` whose `awaitClose`
+removes the location callback, so cancellation genuinely unregisters the receiver rather than
+merely stopping delivery. The ViewModel cancels its observation job in `onCleared`.
+
+**Text can grow.** Buttons hold a *minimum* height rather than a fixed one. At a large system
+text scale a fixed box crops its own label, which is the one failure a button cannot afford,
+and the whole screen scrolls so a short phone loses nothing off the bottom.
+
+**Failures are values, and every one of them has a remedy on screen:**
+
+| Condition | What the user sees | What they can do about it |
+| --- | --- | --- |
+| Permission never asked | `Location permission needed` | **Grant permission** — the system dialog |
+| Permission blocked forever | `Location access is blocked` | **Open settings** — because the dialog will never appear again, and repeating the offer would be a lie |
+| Location services switched off | `Location is switched off` | **Open location settings** |
+| No position available | `Cannot get a position` | **Retry**, which restarts the stream |
+| Fix too coarse to anchor | The measured accuracy, and the accuracy required | **Try again** |
+| Fix too coarse to trust | `WEAK SIGNAL` in amber, button stays locked | Wait — reporting a false "in range" would be worse |
+| Mock location provider | Reported, **not blocked** | Nothing — every emulator reports mocked fixes, and blocking makes the app untestable on the device most reviewers use |
+| Storage failure | `Could not read saved office` | **Retry** |
+| Map tiles unreachable | The picker falls back to a plain grid | Nothing — imagery is decoration, and the picker must work on a plane |
+
+`FusedLocationTracker` and `OsmTileSource` both carry an explicit **"this class never throws"**
+contract: every `SecurityException`, timeout, DNS failure and dead-provider result is
+translated into a typed `AppError` at the boundary and returned as a value. The only outbound
+network call in the Android app is the office picker's map tiles, and it is not load-bearing.
 
 ### Stack
 
@@ -639,18 +709,18 @@ over pure domain code, with fakes standing in for hardware.
 | Suite | Tests | What it covers |
 | --- | --- | --- |
 | `android core/common/` | 6 | `Outcome` combinators |
-| `android domain/` | 57 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases |
+| `android domain/` | 59 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
-| `android presentation/` | 50 | MVI reduction, permission escalation, every rejection path, formatters |
+| `android presentation/` | 53 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **457** | |
+| **Total** | **462** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew testDebugUnitTest   # 136 tests
+cd android  && ./gradlew testDebugUnitTest   # 141 tests
 cd ../flutter && flutter test        # 321 tests
 ```
 
@@ -660,9 +730,26 @@ Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.
 
 ## Screenshots
 
-Reference designs supplied with the brief are in [`design/`](design/). Screenshots of the
-running applications belong in [`docs/screenshots/`](docs/screenshots/) — see the note in
-that folder for the exact captures to take and the `adb` one-liner that grabs them.
+Reference designs supplied with the brief are in [`design/`](design/).
+
+### Anchorage Harbor (Flutter), captured on a Galaxy A54
+
+| | | |
+| --- | --- | --- |
+| ![Camera with the focus reticle](docs/screenshots/harbor-camera-focus-reticle.png) | ![Capture settings](docs/screenshots/harbor-capture-settings.png) | ![Upload Manager](docs/screenshots/harbor-upload-manager.png) |
+| **Camera.** Tap-to-focus reticle — the ring cut at twelve o'clock with the AE/AF padlock in the gap — and the zoom slider spanning 0.5x – 8x across both rear cameras. | **Capture settings.** The composition grid and the two-outcome mock-response switch. Flash is absent on purpose: it lives on the top bar. | **Upload Manager.** Byte-weighted progress, the link chip, and the delivered rows. No back arrow — the system gesture and the bottom call to action both leave. |
+
+### Still to capture
+
+The Attendance screen's own captures are **not** in the repository yet. They need a device
+with a location fix, and the three states worth showing are the ones the brief's screenshot
+implies: no office anchored, out of range with a live distance, and in range with the button
+unlocked. [`docs/screenshots/README.md`](docs/screenshots/README.md) has the `adb` one-liner.
+
+> A note before adding more: a camera preview captures whatever the lens is pointed at, and
+> this repository is public. The three above were chosen because their previews are dark or
+> covered. Point the phone at something neutral before capturing the rest, and check the
+> status bar for notification content.
 
 ---
 

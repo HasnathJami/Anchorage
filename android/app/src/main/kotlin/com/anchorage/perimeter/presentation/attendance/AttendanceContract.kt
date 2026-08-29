@@ -118,6 +118,16 @@ sealed interface AttendanceNotice {
 /** Everything the user can do on this screen. */
 sealed interface AttendanceIntent {
     data object ScreenStarted : AttendanceIntent
+
+    /**
+     * The screen left the foreground.
+     *
+     * Distinct from losing permission, and the distinction is the whole point:
+     * permission says whether the app *may* read the position, visibility says
+     * whether it has any reason to. Conflating them kept the GPS streaming
+     * behind the home screen for as long as the Activity lived.
+     */
+    data object ScreenStopped : AttendanceIntent
     data object SetOfficeLocationClicked : AttendanceIntent
     data object MarkAttendanceClicked : AttendanceIntent
     data object ClearOfficeClicked : AttendanceIntent

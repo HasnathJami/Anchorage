@@ -178,6 +178,11 @@ rather than blocking mock locations. Match that standard.
 | Thing | Decision | Why |
 | --- | --- | --- |
 | Geofence hysteresis | Entry at 50 m, exit at 58 m — on the **dial only** | GPS jitter strobes a bare threshold. The check-in itself uses the true 50 m with no forgiveness. |
+| The position stream | Runs only while permission **and** visibility both hold | `viewModelScope` outlives the screen being visible, so gating on permission alone left the GPS running behind the home screen indefinitely. `repeatOnLifecycle(RESUMED)` cancelling its block is the only signal that the screen has gone - that is what the `finally` in `AttendanceScreen` is for. There is a test that asserts the collector count drops to zero. |
+| Re-measuring on a new anchor | `ObserveAttendanceStatusUseCase` carries the last **fix**, never the last reading | A reading is an answer about one particular office; reusing it after the office moves reports the distance to a building the user has left. The fix is raw enough to still be true. This is what makes "Set Office Location" update the dial immediately rather than on the next GPS tick. |
+| The dial's number | Animated on the same 450 ms curve as its arc | The arc was tweened and the number was not, so the ring glided while the read-out flickered 120 - 118 - 121 underneath it. Animate the *value* and format the result, never a formatted string - and announce the real number to a screen reader, not the tween frame. |
+| Card size changes | `animateContentSize()` on the card, not on each child | Anchoring an office adds a row and the spinner swap changes the height again; both made the card lurch. One modifier covers every size change it can make. |
+| Button heights | `heightIn(min = ...)`, never a fixed `height` | At a large system text scale a fixed box crops its own label, which is the one failure a button cannot afford. |
 | Mock locations | **Reported, not blocked** | Every emulator reports mocked fixes; blocking makes the app untestable on the device most reviewers use. |
 | Map thumbnail | Procedurally drawn, seeded by coordinates | A Maps key means billing, network and a second permission surface for card decoration. |
 | `permission_handler` | Pinned to **12.0.3** | 13.x requires AGP 9 / compileSdk 37 and breaks the Flutter Android build. |
@@ -238,7 +243,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **136 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
+Current state: **141 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

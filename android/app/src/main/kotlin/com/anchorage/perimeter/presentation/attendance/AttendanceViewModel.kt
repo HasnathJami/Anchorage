@@ -40,11 +40,17 @@ import javax.inject.Inject
  *
  * ### Why the observation job is started and stopped explicitly
  *
- * Location streaming is the single most expensive thing this app does. The
- * collection is therefore tied to an explicit [observationJob] that only runs
- * while the screen holds permission, rather than a `stateIn(WhileSubscribed)`
- * that would silently keep the GPS warm whenever anything happened to hold a
- * reference.
+ * Location streaming is the single most expensive thing this app does, so the
+ * collection is tied to an explicit [observationJob] rather than to a
+ * `stateIn(WhileSubscribed)` that would keep the GPS warm whenever anything
+ * happened to hold a reference.
+ *
+ * It runs only while **both** conditions hold: the app has permission, *and*
+ * the screen is in the foreground. Those are different questions, and gating
+ * on the first alone was a real battery bug - `viewModelScope` outlives the
+ * screen being visible, so opening Attendance and pressing home left the
+ * receiver running at the full update interval, indefinitely, for a reading
+ * nobody could see.
  */
 @HiltViewModel
 class AttendanceViewModel @Inject constructor(
@@ -73,9 +79,13 @@ class AttendanceViewModel @Inject constructor(
     private var observationJob: Job? = null
     private var hasLocationPermission: Boolean = false
 
+    /** Whether the screen is in the foreground. See the class doc. */
+    private var isScreenVisible: Boolean = false
+
     fun onIntent(intent: AttendanceIntent) {
         when (intent) {
             AttendanceIntent.ScreenStarted -> Unit // permission state arrives separately
+            AttendanceIntent.ScreenStopped -> onScreenStopped()
             AttendanceIntent.SetOfficeLocationClicked -> onSetOfficeLocation()
             AttendanceIntent.MarkAttendanceClicked -> onMarkAttendance()
             AttendanceIntent.ClearOfficeClicked -> onClearOffice()
@@ -90,11 +100,16 @@ class AttendanceViewModel @Inject constructor(
 
     private fun onPermissionStateChanged(granted: Boolean) {
         hasLocationPermission = granted
+
+        // Arriving on a resume, so the screen is on screen by definition. The
+        // permission check is what the lifecycle observer sends when it starts.
+        isScreenVisible = true
+
         if (granted) {
             if (_uiState.value.notice.isPermissionNotice()) {
                 _uiState.update { it.copy(notice = null) }
             }
-            startObserving()
+            syncObservation()
         } else {
             stopObserving()
             _uiState.update {
@@ -104,6 +119,17 @@ class AttendanceViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * The screen went away. The position stream goes with it.
+     *
+     * The permission flag is deliberately *not* cleared: it is still true, and
+     * the next resume re-checks it anyway. Only the receiver stops.
+     */
+    private fun onScreenStopped() {
+        isScreenVisible = false
+        stopObserving()
     }
 
     private fun onPermissionResult(intent: AttendanceIntent.PermissionResult) {
@@ -203,6 +229,11 @@ class AttendanceViewModel @Inject constructor(
 
     // ------------------------------------------------------------ observation
 
+    /** Runs the position stream if, and only if, both gates are open. */
+    private fun syncObservation() {
+        if (hasLocationPermission && isScreenVisible) startObserving() else stopObserving()
+    }
+
     private fun startObserving() {
         if (observationJob?.isActive == true) return
 
@@ -219,7 +250,7 @@ class AttendanceViewModel @Inject constructor(
     private fun restartObserving() {
         _uiState.update { it.copy(notice = null) }
         stopObserving()
-        startObserving()
+        syncObservation()
     }
 
     override fun onCleared() {

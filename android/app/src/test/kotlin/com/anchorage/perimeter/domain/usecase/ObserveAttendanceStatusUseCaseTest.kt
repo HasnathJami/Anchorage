@@ -66,6 +66,55 @@ class ObserveAttendanceStatusUseCaseTest {
     }
 
     @Test
+    fun `setting the office re-measures at once, without waiting for a new fix`() =
+        runTest {
+            // The behaviour the whole screen is judged on. GPS updates arrive
+            // every few seconds; if the dial waited for the next one, pressing
+            // "Set Office Location" would leave it reading "--" or, worse, the
+            // distance to the *old* office, for as long as it took a satellite
+            // to answer. The fix is carried forward precisely so the new
+            // anchor can be measured against it immediately.
+            useCase().test {
+                awaitItem() // no office, no fix
+
+                tracker.emit(Outcome.Success(fixAt(point = farPoint, accuracyMeters = 6f)))
+                awaitItem() // a position, but still nowhere to measure it from
+
+                officeRepository.emit(Outcome.Success(anchorAt()))
+
+                val measured = awaitItem()
+                assertThat(measured.reading).isNotNull()
+                assertThat(measured.reading?.status).isEqualTo(ProximityStatus.OUTSIDE)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `moving the office re-measures from the same position`() = runTest {
+        // Re-anchoring while standing still: the distance must be recomputed
+        // against the new office rather than reported from a reading that was
+        // an answer about the old one.
+        officeRepository.emit(Outcome.Success(anchorAt(point = farPoint)))
+
+        useCase().test {
+            awaitItem()
+            tracker.emit(Outcome.Success(fixAt(point = nearPoint, accuracyMeters = 6f)))
+
+            val beforeMove = awaitItem()
+            assertThat(beforeMove.reading?.status).isEqualTo(ProximityStatus.OUTSIDE)
+
+            // The user presses "Set Office Location" where they are standing.
+            officeRepository.emit(Outcome.Success(anchorAt(point = nearPoint)))
+
+            val afterMove = awaitItem()
+            assertThat(afterMove.reading?.status).isEqualTo(ProximityStatus.INSIDE)
+            assertThat(afterMove.reading?.distanceMeters).isLessThan(1.0)
+            assertThat(afterMove.canMarkAttendance).isTrue()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `keeps the last known reading when a fix fails mid-stream`() = runTest {
         officeRepository.emit(Outcome.Success(anchorAt()))
 

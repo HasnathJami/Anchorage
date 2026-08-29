@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -178,14 +179,18 @@ fun AnchoragePrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leadingIcon: ImageVector? = null,
-    height: Dp = 54.dp,
+    minHeight: Dp = 54.dp,
 ) {
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
-            .height(height),
+            // A *minimum*, never a fixed height. At a large system text scale
+            // the label needs more room than the design's 54 dp, and a fixed
+            // box crops its own text rather than growing - which is the one
+            // failure a button cannot afford.
+            .heightIn(min = minHeight),
         shape = AnchorageTheme.shapes.primaryButton,
         colors = ButtonDefaults.buttonColors(
             containerColor = AnchorageTheme.colors.primary,
@@ -211,14 +216,14 @@ fun AnchorageOutlinedButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leadingIcon: ImageVector? = null,
-    height: Dp = 52.dp,
+    minHeight: Dp = 52.dp,
 ) {
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
-            .height(height),
+            .heightIn(min = minHeight),
         shape = AnchorageTheme.shapes.button,
         border = BorderStroke(
             width = 1.5.dp,
