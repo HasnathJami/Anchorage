@@ -20,6 +20,17 @@ data class AttendanceStatus(
     val todayRecord: AttendanceRecord?,
     val window: AttendanceWindow,
     val isWindowOpen: Boolean,
+    /**
+     * The position this status was measured from, if any.
+     *
+     * Exposed so a *restarted* observation can pick up where the last one left
+     * off. The stream is torn down whenever the screen leaves the foreground -
+     * that is what stops the GPS - and a fresh one starts with nothing carried
+     * forward, so without this every return to the screen blanked the dial
+     * back to `--` until a satellite next answered. Handing the last fix back
+     * in means the distance is on screen in the first frame.
+     */
+    val lastFix: LocationFix? = null,
 ) {
     val isOfficeConfigured: Boolean get() = anchor != null
 
@@ -45,6 +56,7 @@ data class AttendanceStatus(
             todayRecord = null,
             window = window,
             isWindowOpen = false,
+            lastFix = null,
         )
     }
 }

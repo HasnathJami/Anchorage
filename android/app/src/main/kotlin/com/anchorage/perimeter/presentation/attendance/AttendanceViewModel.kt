@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.anchorage.perimeter.core.common.error.AppError
 import com.anchorage.perimeter.core.common.outcome.Outcome
 import com.anchorage.perimeter.domain.model.AttendanceStatus
+import com.anchorage.perimeter.domain.model.LocationFix
 import com.anchorage.perimeter.domain.policy.ProximityStatus
 import com.anchorage.perimeter.domain.usecase.CaptureOfficeAnchorUseCase
 import com.anchorage.perimeter.domain.usecase.ClearOfficeAnchorUseCase
@@ -82,6 +83,22 @@ class AttendanceViewModel @Inject constructor(
     /** Whether the screen is in the foreground. See the class doc. */
     private var isScreenVisible: Boolean = false
 
+    /**
+     * The last position the stream reported, kept across restarts.
+     *
+     * Stopping the stream is what saves the battery; losing the position with
+     * it is what made the screen blink. Coming back from the office picker
+     * tore down the observation and started a fresh one with nothing carried
+     * forward, so the dial dropped to `--` and then jumped to the new distance
+     * when a satellite next answered - at exactly the moment the user had just
+     * moved their office and was watching to see whether it worked.
+     *
+     * Holding the fix here costs one object and removes the blank frame
+     * entirely: the new anchor is measured against it immediately, and the
+     * dial animates from the old number to the new one instead of via nothing.
+     */
+    private var lastKnownFix: LocationFix? = null
+
     fun onIntent(intent: AttendanceIntent) {
         when (intent) {
             AttendanceIntent.ScreenStarted -> Unit // permission state arrives separately
@@ -153,9 +170,7 @@ class AttendanceViewModel @Inject constructor(
             AttendanceNotice.PermissionRequired -> emitEffect(AttendanceEffect.RequestLocationPermission)
             AttendanceNotice.PermissionBlocked -> emitEffect(AttendanceEffect.OpenAppSettings)
             AttendanceNotice.LocationServicesOff -> emitEffect(AttendanceEffect.OpenLocationSettings)
-            AttendanceNotice.PositionUnavailable,
-            is AttendanceNotice.WeakSignal,
-            -> restartObserving()
+            is AttendanceNotice.WeakSignal -> restartObserving()
 
             is AttendanceNotice.AnchorRejected -> {
                 _uiState.update { it.copy(notice = null) }
@@ -237,8 +252,13 @@ class AttendanceViewModel @Inject constructor(
     private fun startObserving() {
         if (observationJob?.isActive == true) return
 
-        observationJob = observeAttendanceStatus()
-            .onEach { status -> _uiState.update { it.reduce(status) } }
+        observationJob = observeAttendanceStatus(initialFix = lastKnownFix)
+            .onEach { status ->
+                // Remembered before the projection, so a restart that happens
+                // between two emissions still has somewhere to start from.
+                status.lastFix?.let { lastKnownFix = it }
+                _uiState.update { it.reduce(status) }
+            }
             .launchIn(viewModelScope)
     }
 
@@ -301,7 +321,6 @@ class AttendanceViewModel @Inject constructor(
         is AppError.Location.PermissionDenied -> AttendanceNotice.PermissionRequired
         is AppError.Location.PermissionPermanentlyDenied -> AttendanceNotice.PermissionBlocked
         is AppError.Location.ServicesDisabled -> AttendanceNotice.LocationServicesOff
-        is AppError.Location.PositionUnavailable -> AttendanceNotice.PositionUnavailable
         is AppError.Location.InsufficientAccuracy -> AttendanceNotice.AnchorRejected(
             reportedAccuracyMeters = reportedAccuracyMeters,
             requiredAccuracyMeters = requiredAccuracyMeters,
@@ -309,8 +328,14 @@ class AttendanceViewModel @Inject constructor(
 
         is AppError.Storage -> AttendanceNotice.StorageProblem
 
-        // Timeouts and rule rejections are momentary: they get a snackbar, not
-        // a banner that would linger after the condition has passed.
+        // Momentary conditions get a snackbar, or nothing at all - never a
+        // banner that would linger after the condition has passed.
+        //
+        // `PositionUnavailable` is deliberately in this group: the dial holds
+        // the last known distance through a dropout and the stream recovers by
+        // itself, so a banner offering "Retry" interrupted a screen that was
+        // still correct in order to offer a button that changed nothing.
+        is AppError.Location.PositionUnavailable,
         is AppError.Location.Timeout,
         is AppError.Attendance,
         is AppError.Unexpected,

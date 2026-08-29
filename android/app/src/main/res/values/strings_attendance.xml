@@ -74,6 +74,10 @@
     <string name="notice_weak_signal_body">Your position is only accurate to ±%1$s. Step outside or near a window for a sharper fix.</string>
     <string name="notice_weak_signal_action">Try again</string>
 
+
+    <!-- Used by the office picker only. The Attendance screen deliberately
+         raises no banner for this: it keeps showing the last known distance
+         and recovers on its own, so there was nothing for Retry to do. -->
     <string name="notice_position_unavailable_title">No position available</string>
     <string name="notice_position_unavailable_body">The device could not produce a location fix. This usually clears up outdoors.</string>
     <string name="notice_position_unavailable_action">Retry</string>

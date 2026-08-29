@@ -159,6 +159,55 @@ class AttendanceViewModelTest {
     }
 
     @Test
+    fun `coming back from the office picker does not blank the dial`() =
+        runTest(dispatcher) {
+            // The jump the user sees: leaving the screen stops the stream (for
+            // the battery), and a fresh stream carries nothing forward - so the
+            // dial dropped to "--" and then snapped to the new distance when a
+            // satellite next answered. At exactly the moment they had just
+            // moved their office and were watching to see whether it worked.
+            grantPermission()
+            officeRepository.emit(Outcome.Success(officeAnchor()))
+            tracker.emit(Outcome.Success(fix(point = FAR)))
+            advanceUntilIdle()
+
+            val before = viewModel.uiState.value.reading
+            assertThat(before).isNotNull()
+
+            // Off to the picker, and back.
+            viewModel.onIntent(AttendanceIntent.ScreenStopped)
+            advanceUntilIdle()
+            grantPermission()
+            advanceUntilIdle()
+
+            // No new fix has arrived yet, and the reading is still there.
+            assertThat(viewModel.uiState.value.reading).isNotNull()
+        }
+
+    @Test
+    fun `and it measures the new office against the position it already had`() =
+        runTest(dispatcher) {
+            // The other half: the office moved while the screen was away, so
+            // the first frame back must show the *new* distance rather than
+            // the old one or nothing at all.
+            grantPermission()
+            officeRepository.emit(Outcome.Success(officeAnchor()))
+            tracker.emit(Outcome.Success(fix(point = FAR)))
+            advanceUntilIdle()
+            assertThat(viewModel.uiState.value.proximity).isEqualTo(ProximityUi.OutOfRange)
+
+            viewModel.onIntent(AttendanceIntent.ScreenStopped)
+            advanceUntilIdle()
+
+            // The picker saved an office where the user is standing.
+            officeRepository.emit(Outcome.Success(officeAnchor(point = FAR)))
+            grantPermission()
+            advanceUntilIdle()
+
+            assertThat(viewModel.uiState.value.proximity).isEqualTo(ProximityUi.InRange)
+        }
+
+    @Test
     fun `tapping the blocked banner asks the screen to open settings`() = runTest(dispatcher) {
         viewModel.onIntent(
             AttendanceIntent.PermissionResult(granted = false, canAskAgain = false),

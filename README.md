@@ -149,6 +149,15 @@ questions — the app may read the position, versus it has any reason to — and
 runs only while both are true. `repeatOnLifecycle(RESUMED)` cancelling its block is the signal
 that the screen has gone; a test asserts the collector count drops to zero.
 
+**Stopping the stream must not lose the position.** These two are one change, and shipping
+the first without the second is what made the screen blink: returning from the office picker
+tore down the observation and started a fresh one carrying nothing, so the dial dropped to
+`--` (or sat on `LOCATING`) and then *jumped* to the new distance when a satellite next
+answered — at exactly the moment the user had moved their office and was watching to see
+whether it had worked. The last fix is now handed back into the new subscription, so the new
+anchor is measured against it in the first frame and the dial animates from the old number to
+the new one instead of via nothing.
+
 **Nothing outlives the screen.** `FusedLocationTracker` is a `callbackFlow` whose `awaitClose`
 removes the location callback, so cancellation genuinely unregisters the receiver rather than
 merely stopping delivery. The ViewModel cancels its observation job in `onCleared`.
@@ -164,7 +173,7 @@ and the whole screen scrolls so a short phone loses nothing off the bottom.
 | Permission never asked | `Location permission needed` | **Grant permission** — the system dialog |
 | Permission blocked forever | `Location access is blocked` | **Open settings** — because the dialog will never appear again, and repeating the offer would be a lie |
 | Location services switched off | `Location is switched off` | **Open location settings** |
-| No position available | `Cannot get a position` | **Retry**, which restarts the stream |
+| No position available | *Nothing.* The dial holds the last known distance and the stream recovers by itself | Nothing to do — a banner here interrupted a screen that was still correct, to offer a Retry that changed nothing |
 | Fix too coarse to anchor | The measured accuracy, and the accuracy required | **Try again** |
 | Fix too coarse to trust | `WEAK SIGNAL` in amber, button stays locked | Wait — reporting a false "in range" would be worse |
 | Mock location provider | Reported, **not blocked** | Nothing — every emulator reports mocked fixes, and blocking makes the app untestable on the device most reviewers use |
@@ -711,16 +720,16 @@ over pure domain code, with fakes standing in for hardware.
 | `android core/common/` | 6 | `Outcome` combinators |
 | `android domain/` | 59 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
-| `android presentation/` | 53 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
+| `android presentation/` | 55 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **462** | |
+| **Total** | **464** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew testDebugUnitTest   # 141 tests
+cd android  && ./gradlew testDebugUnitTest   # 143 tests
 cd ../flutter && flutter test        # 321 tests
 ```
 

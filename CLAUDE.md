@@ -179,6 +179,8 @@ rather than blocking mock locations. Match that standard.
 | --- | --- | --- |
 | Geofence hysteresis | Entry at 50 m, exit at 58 m — on the **dial only** | GPS jitter strobes a bare threshold. The check-in itself uses the true 50 m with no forgiveness. |
 | The position stream | Runs only while permission **and** visibility both hold | `viewModelScope` outlives the screen being visible, so gating on permission alone left the GPS running behind the home screen indefinitely. `repeatOnLifecycle(RESUMED)` cancelling its block is the only signal that the screen has gone - that is what the `finally` in `AttendanceScreen` is for. There is a test that asserts the collector count drops to zero. |
+| The last fix survives an observation restart | `AttendanceStatus.lastFix` in, `initialFix` back out | Stopping the stream is what saves the battery; losing the position with it is what made the screen blink. Returning from the office picker tore down the observation and started a fresh one with nothing carried forward, so the dial dropped to `--` or sat on `LOCATING` and then *jumped* to the new distance. The two must be fixed together - never reintroduce the stop without the carry. |
+| `PositionUnavailable` raises no banner on Attendance | Removed; the picker keeps its own | The dial holds the last known distance through a dropout and the stream recovers by itself, so the banner interrupted a screen that was still correct to offer a Retry that changed nothing. A momentary condition with no *distinct* remedy is not a notice. The picker is different: it needs a position to centre on, so there Retry does something. |
 | Re-measuring on a new anchor | `ObserveAttendanceStatusUseCase` carries the last **fix**, never the last reading | A reading is an answer about one particular office; reusing it after the office moves reports the distance to a building the user has left. The fix is raw enough to still be true. This is what makes "Set Office Location" update the dial immediately rather than on the next GPS tick. |
 | The dial's number | Animated on the same 450 ms curve as its arc | The arc was tweened and the number was not, so the ring glided while the read-out flickered 120 - 118 - 121 underneath it. Animate the *value* and format the result, never a formatted string - and announce the real number to a screen reader, not the tween frame. |
 | Card size changes | `animateContentSize()` on the card, not on each child | Anchoring an office adds a row and the spinner swap changes the height again; both made the card lurch. One modifier covers every size change it can make. |
@@ -243,7 +245,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **141 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
+Current state: **143 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

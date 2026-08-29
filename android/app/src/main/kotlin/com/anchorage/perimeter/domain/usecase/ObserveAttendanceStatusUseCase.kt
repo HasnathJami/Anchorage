@@ -57,7 +57,17 @@ class ObserveAttendanceStatusUseCase(
         val history: List<AttendanceRecord>,
     )
 
-    operator fun invoke(intervalMillis: Long = LocationTracker.DEFAULT_INTERVAL_MILLIS): Flow<AttendanceStatus> {
+    /**
+     * @param initialFix a position carried over from a previous subscription.
+     *   The stream is stopped whenever the screen leaves the foreground, so
+     *   without this the dial blanks to `--` on every return until a fresh fix
+     *   arrives - which on a cold radio is seconds, and is exactly the moment
+     *   the user is looking at it after setting their office.
+     */
+    operator fun invoke(
+        intervalMillis: Long = LocationTracker.DEFAULT_INTERVAL_MILLIS,
+        initialFix: LocationFix? = null,
+    ): Flow<AttendanceStatus> {
         val anchorFlow = officeAnchorRepository.observe()
 
         val fixFlow: Flow<Outcome<LocationFix>?> = locationTracker.stream(intervalMillis)
@@ -69,7 +79,7 @@ class ObserveAttendanceStatusUseCase(
         return combine(anchorFlow, fixFlow, historyFlow) { anchor, fix, history ->
             Inputs(anchor, fix, history)
         }
-            .scan(Carried(AttendanceStatus.initial(window), lastFix = null)) { previous, inputs ->
+            .scan(Carried(AttendanceStatus.initial(window), lastFix = initialFix)) { previous, inputs ->
                 reduce(previous, inputs)
             }
             .drop(1) // discard the seed; the first real emission is index 1
@@ -130,6 +140,7 @@ class ObserveAttendanceStatusUseCase(
                 todayRecord = todayRecord,
                 window = window,
                 isWindowOpen = window.contains(timeProvider.localTime()),
+                lastFix = fix,
             ),
             lastFix = fix,
         )

@@ -75,15 +75,6 @@ fun NoticeBanner(
             content = colors.cautionText,
         )
 
-        AttendanceNotice.PositionUnavailable -> NoticeDescriptor(
-            title = stringResource(R.string.notice_position_unavailable_title),
-            message = stringResource(R.string.notice_position_unavailable_body),
-            action = stringResource(R.string.notice_position_unavailable_action),
-            icon = Icons.Outlined.ErrorOutline,
-            container = colors.cautionContainer,
-            content = colors.cautionText,
-        )
-
         is AttendanceNotice.AnchorRejected -> NoticeDescriptor(
             title = stringResource(R.string.notice_anchor_rejected_title),
             message = stringResource(

@@ -94,7 +94,14 @@ sealed interface AttendanceNotice {
     data class WeakSignal(val accuracyMeters: Float) : AttendanceNotice
 
     /** The positioning stack produced nothing usable. */
-    data object PositionUnavailable : AttendanceNotice
+    // `PositionUnavailable` used to live here, with a Retry action.
+    //
+    // It was removed because it had nothing to offer. The dial keeps showing
+    // the last known distance through a dropout, and the stream recovers on
+    // its own when the provider comes back - so the banner interrupted a
+    // screen that was still telling the truth, to offer a button that did
+    // what was already happening. A momentary condition with no distinct
+    // remedy is not a notice; see the rule in `AttendanceViewModel.toNotice`.
 
     /** The office could not be anchored because the fix was too coarse. */
     data class AnchorRejected(
