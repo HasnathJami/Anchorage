@@ -24,17 +24,156 @@ The anchor even appears in the reference design: it is the icon on the "UPLOAD B
 
 ---
 
+<a id="known-limitations"></a>
+
+## ⚠️ Known limitations — declared by Hasnath Jami Chowdhury (developer)
+
+This section is mine, not the tooling's. I wrote both apps, and these are the boundaries I
+know they have — declared up front, per app, rather than left for a reviewer to find by
+reading the source.
+
+Everything below is a limit of **this build** and of building against a brief with no API and
+no server, not a defect I have missed. Where a limit exists because I chose a trade-off, I
+have said which trade and why.
+
+### Task 1 — Anchorage Perimeter (Android)
+
+**1. The check-in window is currently open all day, and that is not the product rule.**
+The reference design prints `AVAILABLE 09:00 AM – 10:30 AM`, and that morning window is what
+the app is built around. I widened it to `12:00 AM – 11:59 PM` **on purpose**, so that the
+check-in flow could be exercised and screenshotted at any hour rather than only between 9 and
+10:30 in the morning. Nothing about the enforcement was relaxed to do it: the gate, its
+messages and its tests all still exist, and the tests that cover the rule build their own
+narrow window rather than reading the default. Restoring the real window is two constants in
+`AttendanceWindow`.
+
+**2. There is no backend, so the office location is not *verified* — only recorded.**
+This is the significant one. In a real deployment, pressing **Set Office Location** would send
+those coordinates to a server, and the server would decide whether that place genuinely *is*
+the user's office — checking it against the employer's site register, an admin-assigned
+geofence, or an HR record. That validation is the entire point of the feature in production.
+
+The brief supplies no API, so there is nothing to ask. The app therefore accepts whatever
+coordinate the user chooses: they can anchor their own living room and check in from the sofa,
+and the app has no way to know and no standing to object. Everything *around* that decision is
+real and enforced — the Haversine distance, the 50 m radius, the accuracy gate that rejects a
+fix too coarse to trust, the time window, the once-a-day rule. What is missing is **authority**:
+the app can prove you were within 50 m of *a* coordinate, but not that the coordinate was your
+office. That is a server's job, and there is no server.
+
+**3. Attendance records live only on the device.**
+Every check-in is written to a local Room database in app-private storage, and stays there.
+Nothing is uploaded, so a record cannot be seen by an employer, audited centrally, reported on,
+or survive an uninstall or a change of phone. A production system would treat this database as
+an *outbox* and sync it to a server — which is precisely the shape of the upload queue in the
+Flutter app, so the pattern is demonstrated in this repository, just not wired to attendance.
+
+**4. "One check-in per day" is enforced, but only on this device.**
+The rule is real and enforced three times over — the button disables, the use case refuses
+before it even reads the GPS, and a unique index on the date makes the database reject a
+duplicate write. All three are **local**. Clearing the app's data, or using a second phone,
+would produce a second check-in for the same day, and nothing here could detect it. As a
+demonstration that the rule is modelled and enforced at every layer, it is complete; as an
+anti-fraud control it is not, and I would rather say so than imply otherwise. With a backend
+the authority moves server-side and the local checks become what they should be — a fast,
+courteous first line, not the last one.
+
+**5. A mock location provider is reported, not blocked.**
+`GeofenceReading` carries an `isMockProvider` flag and the screen shows a notice when a fix is
+mocked, but it does not refuse the check-in. That is a deliberate trade — every emulator
+reports mocked fixes, so blocking them makes the app impossible to review on the device most
+reviewers reach for. In production, with a backend to appeal to, the honest handling is to
+send the flag with the record and let the server decide.
+
+### Task 2 — Anchorage Harbor (Flutter)
+
+**1. There is no real API, so `SUCCESS` / `FAILED` in the capture settings *is* the server.**
+The brief states no API is available and invites either commented-out call sites or hard-coded
+mock responses. This build does both, and the switch is the honest centre of it.
+
+`MockUploadApi` is not a stub that returns `true`. It is a **working transport**: it paces a
+transfer in ticks, reports throughput it has actually *measured* from the clock rather than the
+rate it was configured with, fails part-way through rather than at byte zero, and returns the
+full typed failure taxonomy the engine is built to handle. That is what lets the Upload Manager
+be exercised for real instead of merely demonstrated.
+
+The switch offers exactly **two** outcomes, because a server has two things to say about an
+upload — it took the file, or it did not:
+
+| Setting | What the Upload Manager does |
+| --- | --- |
+| `SUCCESS` | The row transfers, the byte-weighted header climbs, and it lands on `SYNCED`. Whether it *completes* still depends on the real link — an offline device still parks, which is why captures 8 and 9 were taken with this set to `SUCCESS`. |
+| `FAILED` | The far end rejects it part-way through, however good the signal. The row climbs `RETRYING... (ATTEMPT n/3)` with jittered backoff, then lands on `REJECTED BY SERVER` with per-row retry and discard (capture 7). |
+
+`FAILED` is deliberately a **retryable 500** rather than a permanent 4xx, so that `RetryPolicy`
+— not the mock — decides when to stop. There should be exactly one thing in the codebase that
+owns "when is enough enough", and hard-coding finality into the fake would have taken that
+decision away from it.
+
+What the switch deliberately does **not** offer is `NO INTERNET` or `LOW BANDWIDTH`. Earlier
+drafts had them, and removing them made the demonstration stronger: those are conditions of the
+*link*, not answers from a server, and a scripted network proves only that a switch works. Both
+are now read from the device — connectivity from `ConnectivityMonitor`, bandwidth **measured**
+from the bytes actually moving — which is why the offline captures above could be produced by
+switching the radios off rather than by picking a menu item.
+
+**2. Nothing leaves the phone. The bytes never reach a server, because there is no server.**
+This is the limitation to be clearest about, since the Upload Manager is *designed* to look
+like files are going somewhere.
+
+When a row reaches `SYNCED`, here is what has actually happened:
+
+* the photograph was written to the app's **private storage** at capture time and has not moved
+  since — it is still sitting there;
+* `MockUploadApi` walked the file's byte count on a timer, emitting progress so the row and the
+  header animate the way a real transfer would;
+* **no socket was opened, no request was made, and not one byte left the device**;
+* the queue row was marked `synced` in the local SQLite database.
+
+So `1.4 MB / 1.4 MB Uploaded` in the header means *bytes accounted for*, not bytes transmitted.
+The progress, the throughput read-out and the timings are simulations of a transfer, not the
+record of one. Clearing synced rows deletes the **database rows only** — the image files remain
+in app-private storage, because in a real deployment a file must not be deleted until a server
+has genuinely acknowledged it, and there is no acknowledgement to wait for here.
+
+**3. The production transport is written, but commented out.**
+`lib/data/datasources/http_upload_api.dart` is the real HTTP implementation, written out in
+full and deliberately inert — the brief's own suggestion. It is there so a reviewer can see
+exactly what would ship, including the parts that matter for a resilient client and that the
+mock faithfully reproduces: a **streamed multipart body** so a large file never sits in memory,
+an **idempotency key** so a retry after an ambiguous timeout cannot create a duplicate record
+server-side, and status-code classification that separates retryable (5xx, 408, 429) from
+final. Swapping it in is one line in `injector.dart`; nothing else in the app changes, because
+everything upstream depends on the `UploaderPort` interface rather than on either
+implementation.
+
+**4. What this means for the engine itself — and what it does not.**
+The resilience is real and independently verifiable: the durable SQLite queue, the claim and
+ten-minute lease that stop the foreground sweep and the WorkManager isolate uploading the same
+file twice, the three-attempt budget, the jittered backoff, the parking that spends no attempt,
+and the six triggers that restart a sweep. None of that depends on the transport being fake —
+it is the same code path either way, which is the whole reason the mock was built as a working
+transport rather than a stub.
+
+What is untested by definition is everything that only a real server can tell you: authentication
+and token refresh, a genuine `413` on an oversized file, chunked or resumable uploads for very
+large files, server-side deduplication, and how the queue behaves against real-world latency
+and packet loss rather than a timer.
+
+---
+
 ## Table of contents
 
-1. [Repository layout](#repository-layout)
-2. [Task 1 — Anchorage Perimeter (Native Android)](#task-1--anchorage-perimeter-native-android)
-3. [Task 2 — Anchorage Harbor (Flutter)](#task-2--anchorage-harbor-flutter)
-4. [Project structure and architectural approach](#project-structure-and-architectural-approach)
-5. [Generative AI usage](#generative-ai-usage)
-6. [How to run](#how-to-run)
-7. [Testing](#testing)
-8. [Screenshots](#screenshots)
-9. [Further documentation](#further-documentation)
+1. [Known limitations](#known-limitations)
+2. [Repository layout](#repository-layout)
+3. [Task 1 — Anchorage Perimeter (Native Android)](#task-1--anchorage-perimeter-native-android)
+4. [Task 2 — Anchorage Harbor (Flutter)](#task-2--anchorage-harbor-flutter)
+5. [Project structure and architectural approach](#project-structure-and-architectural-approach)
+6. [Generative AI usage](#generative-ai-usage)
+7. [How to run](#how-to-run)
+8. [Testing](#testing)
+9. [Screenshots](#screenshots)
+10. [Further documentation](#further-documentation)
 
 ---
 
@@ -951,6 +1090,54 @@ it.
    only ever spent on the server's own failures: losing the network parks a row indefinitely
    without touching the counter. Re-opening this screen re-arms everything recoverable and
    sweeps, which is why steps 6 and 7 needed no button press to get moving.
+
+---
+
+#### What the brief actually asks for: losing the network
+
+> *"If the API call fails due to **low bandwidth** or **no internet**, the images must remain
+> in the local queue. Automatically retry the upload once a stable connection is detected
+> **without user intervention**."*
+
+That is the requirement the whole engine exists for, so here it is happening, with the mock
+server set to `SUCCESS` — the **only** thing wrong is the network.
+
+| 8. Offline — nothing is lost | 9. Network back — nothing was pressed |
+| --- | --- |
+| <img src="docs/screenshots/harbor-8-no-network.png" width="260" /> | <img src="docs/screenshots/harbor-9-auto-resumed.png" width="260" /> |
+
+**Capture 8 — the device is genuinely offline** (Wi-Fi and mobile data disabled via `adb`, not
+simulated in code). The link chip turns red and reads `NO LINK`, the header drops to `78%`, and
+the two frames captured while offline sit in amber at **`WAITING FOR CONNECTION`**. Nothing is
+lost, nothing has failed, and — the detail that matters — **no retry attempt has been spent**.
+A missing network is not the task's fault, so the attempt counter is untouched: the row can
+wait offline for a day and still have its full budget when the signal returns.
+
+**Capture 9 — the same two rows, `SYNCED`.** The network was switched back on and *nothing else
+happened*: the app was not reopened, no button was pressed, the screen was not even scrolled.
+`ConnectivityMonitor` saw the link return, held it for a three-second settle window before
+trusting it, and the queue drained itself. The two filenames are identical across both
+captures (`…875495` and `…878605`), which is what makes it the same rows rather than a fresh
+batch.
+
+The settle window is why the chip has **three** states rather than two. Android reports a link
+the instant it associates — often seconds before it can carry a byte — so a naive
+`isConnected` listener starts an upload straight into a failure and burns an attempt every
+time. `NO LINK` → *unstable* → `STABLE LINK` is the difference between a queue that resumes
+and one that thrashes.
+
+**Low bandwidth reaches the same state by a different road.** It is not pictured because a
+genuinely slow link cannot be conjured on a physical device the way airplane mode can, but the
+path is the one the tests cover: throughput is **measured** from the bytes actually moving,
+and if it stays under `BandwidthPolicy.floorBytesPerSecond` for six *continuous* seconds the
+transfer is abandoned and the row parked exactly as above — `WAITING FOR CONNECTION`, no
+attempt spent. The operating system will tell you there is a transport; it will never tell you
+it is useless, which is why that judgement is measured rather than asked for.
+
+Once parked, four independent things can restart a row: the link becoming stable, a backoff
+elapsing, a heartbeat that backs off from 20 s to a 5-minute ceiling while nothing gets
+through, and WorkManager waking the app when it is closed entirely. Capture 9 is the first of
+those.
 
 ---
 
