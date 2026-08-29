@@ -1,7 +1,9 @@
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/flash_policy.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_range.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
 import 'package:anchorage_harbor/domain/usecases/sync_use_cases.dart';
@@ -16,14 +18,24 @@ void main() {
   late FakeUploadQueueRepository queue;
   late RecordingScheduler scheduler;
 
-  CameraBloc buildBloc({FlashPolicy? flashPolicy}) => CameraBloc(
+  /// [dwell] is how long the reticle stays before it fades. Zero keeps the
+  /// tests that do not care about it fast and deterministic; the lock and
+  /// brightness groups need a real one, because the reticle is what they act on.
+  CameraBloc buildBloc({
+    FlashPolicy? flashPolicy,
+    Duration? dwell,
+    Duration zoomSettleDelay = const Duration(milliseconds: 40),
+  }) =>
+      CameraBloc(
         camera: camera,
         permissions: permissions,
         enqueueBatch: EnqueueBatch(repository: queue, scheduler: scheduler),
         clock: () => DateTime(2026, 8, 28, 9),
-        // Zero dwell keeps the focus tests fast and deterministic.
-        focusIndicatorDuration: Duration.zero,
+        focusIndicatorDuration: dwell ?? Duration.zero,
         flashPolicy: flashPolicy ?? FlashPolicy.standard,
+        // Short, so a test that must outlast the settle window does not spend
+        // a third of a second doing it.
+        zoomSettleDelay: zoomSettleDelay,
       );
 
   /// Drives the flash button [presses] times over an open camera.
@@ -314,6 +326,144 @@ void main() {
     );
   });
 
+  group('pinching past what the open camera can show', () {
+    // The default fake device is the awkward one, and the common one: two rear
+    // cameras, the open one running 1x - 8x of its own zoom, and an ultra-wide
+    // beside it whose own 1.0 is the user's 0.5x. Reaching 0.5x therefore
+    // means *opening another sensor*, which blanks the preview for a few
+    // hundred milliseconds.
+    //
+    // A pinch produces dozens of values a second. Acting on each one that
+    // crossed 1.0x reopened the camera over and over, and the screen flashed
+    // its loading state under a moving thumb.
+
+    /// Drives a pinch that travels below 1x without lifting the fingers.
+    Future<void> pinchWide(CameraBloc bloc) async {
+      bloc.add(const CameraStarted());
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraPinchStarted());
+      await Future<void>.delayed(Duration.zero);
+
+      for (final double scale in <double>[0.9, 0.8, 0.7, 0.6, 0.5]) {
+        bloc.add(CameraPinchZoomed(scale));
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    blocTest<CameraBloc, CameraState>(
+      'opens nothing while the fingers are still moving',
+      build: buildBloc,
+      act: pinchWide,
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls, isEmpty,
+            reason: 'a sensor must not be reopened under a moving thumb');
+        expect(bloc.state.effectiveZoom, 1,
+            reason: 'it travels as far as the open camera honestly can, and '
+                'stops there rather than showing a number it is not at');
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'opens the ultra-wide once, when the fingers lift',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        await pinchWide(bloc);
+        bloc.add(const CameraZoomGestureEnded());
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls, <CameraLens>[ultraWideLens]);
+        expect(bloc.state.effectiveZoom, closeTo(0.5, 0.001));
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a gesture that wanders across 1x and comes back opens nothing at all',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        await pinchWide(bloc);
+        // Changed their mind before lifting.
+        bloc.add(const CameraPinchZoomed(2));
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const CameraZoomGestureEnded());
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls, isEmpty);
+        expect(bloc.state.effectiveZoom, 2);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'the hand-over still happens if the gesture never reports its end',
+      // Gesture recognisers lose arenas, and a pointer can be cancelled by the
+      // system without an end event. The settle timer is the backstop.
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        await pinchWide(bloc);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls, <CameraLens>[ultraWideLens]);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a quick-zoom pill does not wait for anything',
+      // A tap is a decision, not a drag. Making it sit out a settle window
+      // would be latency for no reason.
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(
+          const CameraZoomStopSelected(ZoomStop(ratio: 0.5, label: '0.5')),
+        );
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls, <CameraLens>[ultraWideLens]);
+        expect(bloc.state.effectiveZoom, closeTo(0.5, 0.001));
+      },
+    );
+
+    test('the hand-over is marked as one, so the chrome is not covered',
+        () async {
+      // A cold start has earned a spinner. A rear-to-rear hand-over has not:
+      // it is a few hundred milliseconds mid-gesture, and a full-screen
+      // loading state over it is the flicker this whole group is about. The
+      // page keys its blocking overlay off this flag.
+      final CameraBloc bloc = buildBloc();
+      final List<CameraState> seen = <CameraState>[];
+      final sub = bloc.stream.listen(seen.add);
+
+      bloc.add(const CameraStarted());
+      await Future<void>.delayed(Duration.zero);
+      seen.clear();
+
+      bloc.add(const CameraZoomStopSelected(ZoomStop(ratio: 0.5, label: '0.5')));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        seen.where((CameraState s) => s.phase == CameraPhase.initialising),
+        isNotEmpty,
+        reason: 'the sensor really is gone for a moment',
+      );
+      expect(
+        seen
+            .where((CameraState s) => s.phase == CameraPhase.initialising)
+            .every((CameraState s) => s.isSwitchingLens),
+        isTrue,
+        reason: 'and every one of those moments is flagged as a hand-over',
+      );
+      expect(bloc.state.isSwitchingLens, isFalse,
+          reason: 'the flag does not outlive the switch');
+
+      await sub.cancel();
+      await bloc.close();
+    });
+  });
+
   group('zoom', () {
     blocTest<CameraBloc, CameraState>(
       'a zoom that has not moved is never sent to the platform',
@@ -404,6 +554,188 @@ void main() {
       verify: (CameraBloc bloc) {
         expect(camera.focusCalls.single.x, 1.0);
         expect(camera.focusCalls.single.y, 0.0);
+      },
+    );
+  });
+
+  group('metering lock', () {
+    // A dwell long enough that the reticle is still there to be operated.
+    CameraBloc lockBloc() => buildBloc(dwell: const Duration(seconds: 4));
+
+    /// Taps to place a reticle, then works the padlock [times] times.
+    Future<void> focusThenToggle(CameraBloc bloc, int times) async {
+      bloc.add(const CameraStarted());
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraFocusRequested(x: 0.5, y: 0.5));
+      await Future<void>.delayed(Duration.zero);
+      for (int i = 0; i < times; i++) {
+        bloc.add(const CameraFocusLockToggled());
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    blocTest<CameraBloc, CameraState>(
+      'the padlock holds focus and exposure together',
+      build: lockBloc,
+      act: (CameraBloc bloc) => focusThenToggle(bloc, 1),
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isTrue);
+        expect(camera.lockCalls.last, isTrue);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'tapping it again hands metering back to the sensor',
+      build: lockBloc,
+      act: (CameraBloc bloc) => focusThenToggle(bloc, 2),
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isFalse);
+        expect(camera.lockCalls.last, isFalse);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a locked reticle outlives its dwell timer',
+      // A lock the user cannot see is a lock they forget they set, and every
+      // photograph afterwards is metered for a subject they walked away from.
+      build: () => buildBloc(dwell: const Duration(milliseconds: 20)),
+      act: (CameraBloc bloc) async {
+        await focusThenToggle(bloc, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isTrue);
+        expect(bloc.state.focusPoint, isNotNull);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'an unlocked reticle does not',
+      build: () => buildBloc(dwell: const Duration(milliseconds: 20)),
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const CameraFocusRequested(x: 0.5, y: 0.5));
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+      },
+      verify: (CameraBloc bloc) => expect(bloc.state.focusPoint, isNull),
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a tap elsewhere releases the lock and re-meters',
+      build: lockBloc,
+      act: (CameraBloc bloc) async {
+        await focusThenToggle(bloc, 1);
+        bloc.add(const CameraFocusRequested(x: 0.1, y: 0.9));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isFalse);
+        expect(camera.lockCalls.last, isFalse);
+        expect(camera.focusCalls.last.x, 0.1);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a sensor that refuses the lock does not show a padlock anyway',
+      build: () {
+        camera.lockFailure = const CameraOperationFailure('setMeteringLocked');
+        return lockBloc();
+      },
+      act: (CameraBloc bloc) => focusThenToggle(bloc, 1),
+      verify: (CameraBloc bloc) =>
+          expect(bloc.state.isMeteringLocked, isFalse),
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'releasing the sensor drops the lock with it',
+      // A new controller starts at auto metering, so state describing the old
+      // one must not survive.
+      build: lockBloc,
+      act: (CameraBloc bloc) async {
+        await focusThenToggle(bloc, 1);
+        bloc.add(const CameraPaused());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.isMeteringLocked, isFalse);
+        expect(bloc.state.focusPoint, isNull);
+      },
+    );
+  });
+
+  group('brightness', () {
+    CameraBloc exposureBloc() => buildBloc(dwell: const Duration(seconds: 4));
+
+    Future<void> focusThenExpose(CameraBloc bloc, double ev) async {
+      bloc.add(const CameraStarted());
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(const CameraFocusRequested(x: 0.5, y: 0.5));
+      await Future<void>.delayed(Duration.zero);
+      bloc.add(CameraExposureOffsetChanged(ev));
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    blocTest<CameraBloc, CameraState>(
+      'the slider snaps to the sensor grid before anything sees the value',
+      // The session fixture reports ±2 EV in half stops.
+      build: exposureBloc,
+      act: (CameraBloc bloc) => focusThenExpose(bloc, 0.7),
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.exposureOffset, 0.5);
+        expect(camera.exposureCalls.last, 0.5);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a value beyond the sensor is clamped, not sent',
+      build: exposureBloc,
+      act: (CameraBloc bloc) => focusThenExpose(bloc, 9),
+      verify: (CameraBloc bloc) => expect(camera.exposureCalls.last, 2.0),
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a brightness that has not moved is never sent to the platform',
+      // Same battery argument as zoom: a finger held at an end stop produces
+      // dozens of identical values a second.
+      build: exposureBloc,
+      act: (CameraBloc bloc) async {
+        await focusThenExpose(bloc, 1.0);
+        bloc.add(const CameraExposureOffsetChanged(1.0));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) => expect(camera.exposureCalls.length, 1),
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'the reticle expiring returns the exposure to neutral',
+      // Otherwise the brightness becomes an invisible setting, which is the one
+      // thing a camera must never have.
+      build: () => buildBloc(dwell: const Duration(milliseconds: 20)),
+      act: (CameraBloc bloc) async {
+        await focusThenExpose(bloc, 1.5);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.focusPoint, isNull);
+        expect(bloc.state.exposureOffset, 0);
+        expect(camera.exposureCalls.last, 0);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a sensor with no exposure compensation ignores the slider entirely',
+      build: () {
+        camera.session = sessionFor(
+          wideLens,
+          exposureRange: ExposureRange.fixed,
+        );
+        return exposureBloc();
+      },
+      act: (CameraBloc bloc) => focusThenExpose(bloc, 1.5),
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.exposureOffset, 0);
+        expect(camera.exposureCalls, isEmpty);
       },
     );
   });
@@ -556,7 +888,12 @@ void main() {
     blocTest<CameraBloc, CameraState>(
       'a single rear camera that can zoom still gets a row of stops',
       build: () {
-        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 8);
+        camera.session = sessionFor(
+          wideLens,
+          minZoom: 1,
+          maxZoom: 8,
+          lenses: <CameraLens>[wideLens],
+        );
         return buildBloc();
       },
       act: (CameraBloc bloc) async {
@@ -574,7 +911,12 @@ void main() {
     blocTest<CameraBloc, CameraState>(
       'tapping a stop the open sensor can reach just sets the zoom',
       build: () {
-        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 8);
+        camera.session = sessionFor(
+          wideLens,
+          minZoom: 1,
+          maxZoom: 8,
+          lenses: <CameraLens>[wideLens],
+        );
         return buildBloc();
       },
       act: (CameraBloc bloc) async {
@@ -591,10 +933,28 @@ void main() {
     );
 
     blocTest<CameraBloc, CameraState>(
+      'a device with a separate ultra-wide is still offered the 0.5 button',
+      // The gap this closes: on hardware that publishes each rear sensor as its
+      // own camera, the open one starts at 1x. A row built from *its* range
+      // would never show 0.5, so the lens-switching fallback behind that
+      // button could never be reached from the UI at all.
+      build: () {
+        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 4);
+        return buildBloc();
+      },
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.settings.minZoom, 1);
+        expect(bloc.state.zoomStops.first.ratio, 0.5);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
       'a stop outside the open sensor opens the rear camera that can reach it',
       build: () {
-        // A device that publishes each rear sensor separately: the open one
-        // starts at 1x and physically cannot go wider.
         camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 4);
         return buildBloc();
       },
@@ -608,6 +968,27 @@ void main() {
       },
       verify: (CameraBloc bloc) {
         expect(camera.lensCalls.single, ultraWideLens);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'the offered range never exceeds the app ceiling of 8x',
+      build: () {
+        // Plenty of phones report 10x, 30x or more. Past ~8x it is upscaling.
+        camera.session = sessionFor(
+          wideLens,
+          minZoom: 1,
+          maxZoom: 30,
+          lenses: <CameraLens>[wideLens],
+        );
+        return buildBloc();
+      },
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.reachableZoomRange.max, ZoomRange.preferredMax);
       },
     );
   });

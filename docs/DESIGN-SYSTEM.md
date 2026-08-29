@@ -169,8 +169,9 @@ Radii are named for the component that owns them:
 | `ShutterButton` | Disc inside a ring; shrinks while capturing — the cheapest possible tap confirmation that does not obscure the frame |
 | `BatchThumbnail` | Newest shot with a blue count badge; opens the batch review sheet; `errorBuilder` for a deleted file |
 | `BatchReviewSheet` | The shots not yet handed over, as a bounded scrolling grid; tap to drop one |
-| `CameraSettingsSheet` | Flash as an explicit four-way choice, the composition grid, and the mock-transport switch |
-| `FocusReticle` | Yellow square, `easeOutBack`, mirroring the platform camera apps users know |
+| `CameraSettingsSheet` | The composition grid and the mock-transport switch. Flash is *not* here — the top bar already cycles it, and one setting deserves one control |
+| `HarborToast` | A momentary message at the **top** of the screen — 2.5 s for a confirmation, 4 s for a failure. An `OverlayEntry`, because `SnackBar` only anchors to the bottom, which on the camera is the shutter |
+| `FocusReticle` | Ring + AE/AF padlock + brightness slider, `easeOutBack`, mirroring the platform camera apps users know; positioned so the *ring* sits on the tap, and clamped to stay on screen near an edge |
 | `LinkBadge` | Three states, not two |
 | `BatchProgressHeader` | Byte-weighted bar with the pause control |
 | `UploadTaskTile` | Active row lifted with a blue hairline and inline progress; file-name stem in white with the extension muted; delivered rows dimmed to 55 % |

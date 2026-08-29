@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/link_quality.dart';
+import 'package:anchorage_harbor/domain/entities/bandwidth_policy.dart';
 import 'package:anchorage_harbor/domain/entities/retry_policy.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/domain/repositories/upload_queue_repository.dart';
@@ -52,7 +53,11 @@ class SyncSweepReport {
 ///     transferring at a time. It also bounds memory on large files.
 ///  3. **Connectivity failures do not consume attempts.** Losing the signal
 ///     mid-transfer parks the task; only a genuine transport or server error
-///     increments the attempt counter and schedules jittered backoff.
+///     increments the attempt counter and schedules jittered backoff. A link
+///     that is *up but too slow to be useful* counts as a connectivity failure
+///     too — see [BandwidthPolicy]. The operating system will not report that
+///     one, so throughput is measured as the bytes move and the transfer is
+///     abandoned if it stays under the floor.
 ///  4. **Unretryable failures stop immediately.** A missing file or a 400 will
 ///     never succeed, so the task is failed once and shown to the user rather
 ///     than looped five times.
@@ -76,6 +81,7 @@ class ProcessUploadQueue {
     required ConnectivityPort connectivity,
     required BackgroundSchedulerPort scheduler,
     RetryPolicy retryPolicy = const RetryPolicy(),
+    BandwidthPolicy bandwidthPolicy = BandwidthPolicy.standard,
     DateTime Function() clock = DateTime.now,
     this.staleClaimAfter = const Duration(minutes: 10),
     Random? random,
@@ -84,6 +90,7 @@ class ProcessUploadQueue {
         _connectivity = connectivity,
         _scheduler = scheduler,
         _retryPolicy = retryPolicy,
+        _bandwidth = bandwidthPolicy,
         _clock = clock,
         _random = random ?? Random();
 
@@ -92,6 +99,7 @@ class ProcessUploadQueue {
   final ConnectivityPort _connectivity;
   final BackgroundSchedulerPort _scheduler;
   final RetryPolicy _retryPolicy;
+  final BandwidthPolicy _bandwidth;
   final DateTime Function() _clock;
   final Random _random;
 
@@ -185,6 +193,12 @@ class ProcessUploadQueue {
 
       attempted++;
 
+      // The bandwidth watchdog. Held here rather than in the transport so the
+      // rule applies to *every* transport, and so the decision stays in the
+      // domain where the rest of the sync policy lives.
+      DateTime? slowSince;
+      bool collapsed = false;
+
       final Result<void> result = await _uploader.upload(
         task,
         onProgress: (UploadProgress progress) {
@@ -195,14 +209,54 @@ class ProcessUploadQueue {
             bytesTransferred: progress.bytesTransferred,
             throughputBytesPerSecond: progress.throughputBytesPerSecond,
           );
+
+          if (collapsed) return;
+
+          if (!_bandwidth.isTooSlow(progress.throughputBytesPerSecond)) {
+            // Recovered. The grace window measures a *continuous* slow spell,
+            // so one good tick clears it - a link that dips and comes back is
+            // not a link that has failed.
+            slowSince = null;
+            return;
+          }
+
+          final DateTime now = _clock();
+          slowSince ??= now;
+
+          if (_bandwidth.shouldPark(
+            observedBytesPerSecond: progress.throughputBytesPerSecond,
+            slowFor: now.difference(slowSince!),
+          )) {
+            collapsed = true;
+            // Stop pushing bytes down a pipe that cannot carry them. The
+            // transport answers the cancellation however it likes; the park
+            // below does not depend on which failure comes back.
+            _uploader.cancel(task.id);
+          }
         },
       );
 
       final Failure? failure = result.failureOrNull;
 
       if (failure == null) {
+        // The cancellation lost a race with the last chunk. A delivered file
+        // is delivered.
         await _repository.markSynced(task.id, _clock());
         succeeded++;
+        continue;
+      }
+
+      // Rule 3, the half the operating system cannot tell us about: the link
+      // is up, and too slow to be worth an attempt.
+      if (collapsed) {
+        await _repository.parkForConnectivity(
+          task.id,
+          UploadFailureKind.lowBandwidth,
+        );
+        parked++;
+        await _scheduler.requestSyncWhenConnected(
+          reason: 'throughput collapsed mid-transfer',
+        );
         continue;
       }
 

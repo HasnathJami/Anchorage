@@ -75,18 +75,25 @@ final class CameraZoomStopSelected extends CameraEvent {
   List<Object?> get props => <Object?>[stop];
 }
 
-/// Pick a flash mode outright, rather than cycling to it.
+/// Open the camera that can deliver [effective], and set it there.
 ///
-/// The top-bar button cycles because that is the gesture a camera user
-/// expects; the settings sheet sets a mode directly because a list of options
-/// that you have to tap three times to reach the third one is a bad list.
-final class CameraFlashModeSelected extends CameraEvent {
-  const CameraFlashModeSelected(this.mode);
+/// Raised by the zoom paths rather than acted on inline, and handled
+/// `sequential`, because opening a sensor must not be torn down half way. The
+/// zoom handlers are `restartable` — a pinch replaces its own event dozens of
+/// times a second — and a `selectLens` cancelled mid-flight leaves the app
+/// with no camera and a spinner.
+final class CameraZoomHandoverRequested extends CameraEvent {
+  const CameraZoomHandoverRequested(this.effective);
 
-  final CaptureFlashMode mode;
+  final double effective;
 
   @override
-  List<Object?> get props => <Object?>[mode];
+  List<Object?> get props => <Object?>[effective];
+}
+
+/// A continuous zoom gesture ended - the finger left the glass.
+final class CameraZoomGestureEnded extends CameraEvent {
+  const CameraZoomGestureEnded();
 }
 
 /// Show or hide the rule-of-thirds overlay.
@@ -123,6 +130,25 @@ final class CameraFocusRequested extends CameraEvent {
 
   @override
   List<Object?> get props => <Object?>[x, y];
+}
+
+/// The padlock on the focus reticle was tapped.
+///
+/// Locks focus *and* exposure together, and holds the reticle on screen for as
+/// long as the lock is on — a lock the user cannot see is a lock they will
+/// forget they set, and every subsequent photograph comes out wrong.
+final class CameraFocusLockToggled extends CameraEvent {
+  const CameraFocusLockToggled();
+}
+
+/// The brightness slider under the reticle moved. Absolute EV.
+final class CameraExposureOffsetChanged extends CameraEvent {
+  const CameraExposureOffsetChanged(this.ev);
+
+  final double ev;
+
+  @override
+  List<Object?> get props => <Object?>[ev];
 }
 
 /// The focus reticle's dwell time elapsed.

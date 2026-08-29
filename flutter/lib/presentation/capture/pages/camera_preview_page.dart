@@ -1,15 +1,19 @@
 import 'package:anchorage_harbor/app/anchorage_harbor_app.dart';
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
+import 'package:anchorage_harbor/core/designsystem/harbor_toast.dart';
 import 'package:anchorage_harbor/di/injector.dart';
 import 'package:anchorage_harbor/data/datasources/camera_plugin_adapter.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/preview_crop.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
 import 'package:anchorage_harbor/presentation/capture/widgets/batch_review_sheet.dart';
 import 'package:anchorage_harbor/presentation/capture/widgets/camera_chrome.dart';
 import 'package:anchorage_harbor/presentation/capture/widgets/camera_settings_sheet.dart';
+import 'package:anchorage_harbor/presentation/capture/widgets/exit_confirmation_dialog.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// `CameraPreviewScreen` from the brief.
@@ -38,6 +42,9 @@ class CameraPreviewPage extends StatefulWidget {
 
 class _CameraPreviewPageState extends State<CameraPreviewPage>
     with WidgetsBindingObserver {
+  /// True while the exit confirmation is on screen or being acted on.
+  bool _exitPending = false;
+
   @override
   void initState() {
     super.initState();
@@ -73,29 +80,111 @@ class _CameraPreviewPageState extends State<CameraPreviewPage>
           previous.notice != current.notice && current.notice != null,
       listener: _showNotice,
       builder: (BuildContext context, CameraState state) {
-        return Scaffold(
-          backgroundColor: Colors.black,
-          body: Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              _PreviewSurface(state: state),
-              _ChromeOverlay(state: state),
-              if (!state.isReady) _BlockingOverlay(state: state),
-            ],
+        // The camera is the app's root route, so a back press here is a request
+        // to close the app, not to pop a screen. `canPop: false` intercepts it
+        // and routes it through exactly the same confirmation as the ✕ — one
+        // exit path, asked the same way whichever gesture started it.
+        return PopScope<Object?>(
+          canPop: false,
+          onPopInvokedWithResult: (bool didPop, Object? result) {
+            if (didPop) return;
+            _requestExit(state);
+          },
+          child: Scaffold(
+            backgroundColor: Colors.black,
+            body: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                _PreviewSurface(state: state),
+                _ChromeOverlay(state: state, onClose: () => _requestExit(state)),
+                // Not while a rear camera is handing over to another one: the
+                // sensor is gone for a few hundred milliseconds, but the
+                // chrome is still true and still worth touching, and throwing
+                // a cold-start spinner over it is the flicker that pinching
+                // past 1x used to produce.
+                if (!state.isReady && !state.isSwitchingLens)
+                  _BlockingOverlay(state: state),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
+  /// Confirm, optionally hand the batch over, then close the app.
+  ///
+  /// Guarded against re-entry: on Android a back press and predictive-back can
+  /// both arrive while the dialog is already up, and two stacked confirmations
+  /// is a bug the user has to dismiss twice.
+  Future<void> _requestExit(CameraState state) async {
+    if (_exitPending) return;
+    _exitPending = true;
+
+    try {
+      final CameraBloc bloc = context.read<CameraBloc>();
+
+      final ExitIntent intent = await ExitConfirmationDialog.show(
+        context,
+        // Only work that is still the user's to lose counts. Anything already
+        // in the queue is durable and survives the app closing, so warning
+        // about it would be a false alarm.
+        pendingShots: state.canSubmitBatch ? state.shotCount : 0,
+      );
+
+      if (intent == ExitIntent.cancel) return;
+
+      if (intent == ExitIntent.uploadThenExit && !await _handOverBatch(bloc)) {
+        // The enqueue failed. The Bloc has already raised the notice that says
+        // why; closing now would do exactly the thing the user chose to avoid.
+        return;
+      }
+
+      // `SystemNavigator.pop` rather than `exit(0)`: it asks the platform to
+      // finish the activity, which lets Flutter and the plugins shut down in
+      // order. Killing the process outright is how a half-written SQLite
+      // transaction becomes a corrupted queue.
+      await SystemNavigator.pop();
+    } finally {
+      if (mounted) _exitPending = false;
+    }
+  }
+
+  /// Submits the batch and waits for the engine to accept it.
+  ///
+  /// Returns whether the queue actually took it.
+  Future<bool> _handOverBatch(CameraBloc bloc) async {
+    // Subscribed *before* the event is dispatched: a Bloc stream does not
+    // replay, and the hand-over can complete inside a microtask.
+    final Future<CameraState> settled =
+        bloc.stream.firstWhere((CameraState state) => !state.isSubmitting);
+
+    bloc.add(const CameraBatchSubmitted());
+
+    final CameraState result = await settled.timeout(
+      // A backstop, not a deadline. Enqueueing a batch is a single SQLite
+      // transaction; if it has not answered in eight seconds something is very
+      // wrong, and hanging the exit on it forever would be worse.
+      const Duration(seconds: 8),
+      onTimeout: () => bloc.state,
+    );
+
+    return !result.hasShots;
+  }
+
   void _showNotice(BuildContext context, CameraState state) {
     final CameraNotice? notice = state.notice;
     if (notice == null) return;
 
-    final (String message, SnackBarAction? action) = switch (notice) {
+    // Confirmations get [HarborToast.brief]; anything the user has to read and
+    // act on gets [HarborToast.standard]. A hand-over the user just triggered
+    // themselves is the one message that must not linger over the shutter.
+    final (String message, Duration life, HarborToastAction? action) =
+        switch (notice) {
       BatchQueuedNotice(:final count) => (
           '$count photograph${count == 1 ? '' : 's'} handed to the sync engine.',
-          SnackBarAction(
+          HarborToast.brief,
+          (
             label: 'VIEW',
             onPressed: () =>
                 Navigator.of(context).pushNamed(HarborRoutes.uploads),
@@ -103,6 +192,7 @@ class _CameraPreviewPageState extends State<CameraPreviewPage>
         ),
       CameraStorageNotice() => (
           'Could not write to local storage. Free some space and try again.',
+          HarborToast.standard,
           null,
         ),
       CameraHardwareNotice(:final detail) => (
@@ -112,23 +202,51 @@ class _CameraPreviewPageState extends State<CameraPreviewPage>
               'The camera was interrupted. Reopening the preview.',
             _ => 'The camera could not complete that action.',
           },
+          HarborToast.standard,
           null,
         ),
       CameraFlashUnavailableNotice() => (
           'This camera has no flash.',
+          HarborToast.standard,
           null,
         ),
       TorchTimedOutNotice() => (
           'The torch switched off to save battery.',
+          HarborToast.brief,
           null,
         ),
-      CameraPermissionNotice() => ('Camera permission is required.', null),
+      CameraPermissionNotice() => (
+          'Camera permission is required.',
+          HarborToast.standard,
+          null,
+        ),
     };
 
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message), action: action));
+    HarborToast.show(
+      context,
+      message: message,
+      duration: life,
+      action: action,
+    );
   }
+}
+
+/// The size the preview is laid out at before it is scaled to cover.
+///
+/// Shared with [_FittedPreview] rather than written twice: the crop maths and
+/// the widget that performs the crop have to agree about the source, and the
+/// axes are swapped here because a portrait preview reports its size in the
+/// sensor's own landscape orientation.
+Size _previewChildSize(CameraController? controller) {
+  final Size? preview = controller?.value.previewSize;
+  if (preview == null) return const Size(1080, 1920);
+  return Size(preview.height, preview.width);
+}
+
+/// A stored sensor point, as an offset in the preview's own coordinates.
+Offset _viewportOffset(FocusPoint point, PreviewCrop crop, Size size) {
+  final ({double x, double y}) mapped = crop.toViewport(x: point.x, y: point.y);
+  return Offset(mapped.x * size.width, mapped.y * size.height);
 }
 
 /// The live preview, plus the pinch and tap gestures that act on it.
@@ -146,52 +264,83 @@ class _PreviewSurface extends StatelessWidget {
       builder: (BuildContext context, BoxConstraints constraints) {
         final Size size = Size(constraints.maxWidth, constraints.maxHeight);
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onScaleStart: (_) => bloc.add(const CameraPinchStarted()),
-          onScaleUpdate: (ScaleUpdateDetails details) {
-            // `onScaleUpdate` also fires for single-finger pans with scale 1;
-            // ignoring those keeps a tap-to-focus from nudging the zoom.
-            if (details.pointerCount < 2) return;
-            bloc.add(CameraPinchZoomed(details.scale));
-          },
-          onTapUp: (TapUpDetails details) {
-            if (!state.isReady) return;
-            bloc.add(
-              CameraFocusRequested(
-                x: details.localPosition.dx / size.width,
-                y: details.localPosition.dy / size.height,
+        // The preview is painted to *cover* this box, so a tap on screen and
+        // the point it names on the sensor are not the same point. See
+        // [PreviewCrop] - without this, tap-to-focus focused somewhere the
+        // user did not touch, by more the further from centre they tapped.
+        final Size source = _previewChildSize(controller);
+        final PreviewCrop crop = PreviewCrop.of(
+          sourceAspect: source.width / source.height,
+          viewportAspect: size.width / size.height,
+        );
+
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onScaleStart: (_) => bloc.add(const CameraPinchStarted()),
+              onScaleUpdate: (ScaleUpdateDetails details) {
+                // `onScaleUpdate` also fires for single-finger pans with scale
+                // 1; ignoring those keeps a tap-to-focus from nudging the zoom.
+                if (details.pointerCount < 2) return;
+                bloc.add(CameraPinchZoomed(details.scale));
+              },
+              // Fingers up. If the pinch travelled past what the open camera
+              // can show, this is when the other one is opened - once, and not
+              // under a moving thumb.
+              onScaleEnd: (_) => bloc.add(const CameraZoomGestureEnded()),
+              onTapUp: (TapUpDetails details) {
+                if (!state.isReady) return;
+
+                final ({double x, double y}) point = crop.toSensor(
+                  x: details.localPosition.dx / size.width,
+                  y: details.localPosition.dy / size.height,
+                );
+
+                bloc.add(CameraFocusRequested(x: point.x, y: point.y));
+              },
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  if (state.isReady &&
+                      controller != null &&
+                      controller.value.isInitialized)
+                    // Keyed on previewKey so a re-opened controller produces a
+                    // new platform view rather than reusing a disposed texture.
+                    KeyedSubtree(
+                      key: ValueKey<int>(state.session!.previewKey),
+                      child: _FittedPreview(controller: controller),
+                    )
+                  else
+                    const _PreviewPlaceholder(),
+                  if (state.showsGrid) const CompositionGrid(),
+                  // A gentle darkening at both ends so white chrome stays
+                  // legible over a bright sky or a white wall. Without it the
+                  // reference design's floating controls disappear outdoors.
+                  const _ChromeScrim(),
+                ],
               ),
-            );
-          },
-          child: Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              if (state.isReady &&
-                  controller != null &&
-                  controller.value.isInitialized)
-                // Keyed on previewKey so a re-opened controller produces a new
-                // platform view rather than reusing a disposed texture.
-                KeyedSubtree(
-                  key: ValueKey<int>(state.session!.previewKey),
-                  child: _FittedPreview(controller: controller),
-                )
-              else
-                const _PreviewPlaceholder(),
-              if (state.showsGrid) const CompositionGrid(),
-              // A gentle darkening at both ends so white chrome stays legible
-              // over a bright sky or a white wall. Without it the reference
-              // design's floating controls disappear outdoors.
-              const _ChromeScrim(),
-              if (state.focusPoint != null)
-                FocusReticle(
-                  position: Offset(
-                    state.focusPoint!.x * size.width,
-                    state.focusPoint!.y * size.height,
-                  ),
-                ),
-            ],
-          ),
+            ),
+
+            // Deliberately a *sibling* of the gesture detector rather than its
+            // child, and painted after it. The reticle now carries two
+            // controls of its own, and nested inside the focus detector every
+            // tap on the padlock would also register as "re-meter here".
+            if (state.focusPoint != null)
+              FocusReticle(
+                // Back out through the same crop, so the ring is drawn under
+                // the finger rather than where the sensor thinks it is.
+                position: _viewportOffset(state.focusPoint!, crop, size),
+                bounds: size,
+                isLocked: state.isMeteringLocked,
+                exposure: state.exposureRange,
+                exposureOffset: state.exposureOffset,
+                onLockToggled: () => bloc.add(const CameraFocusLockToggled()),
+                onExposureChanged: (double ev) =>
+                    bloc.add(CameraExposureOffsetChanged(ev)),
+              ),
+          ],
         );
       },
     );
@@ -210,12 +359,14 @@ class _FittedPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Size child = _previewChildSize(controller);
+
     return ClipRect(
       child: FittedBox(
         fit: BoxFit.cover,
         child: SizedBox(
-          width: controller.value.previewSize?.height ?? 1080,
-          height: controller.value.previewSize?.width ?? 1920,
+          width: child.width,
+          height: child.height,
           child: CameraPreview(controller),
         ),
       ),
@@ -271,9 +422,14 @@ class _PreviewPlaceholder extends StatelessWidget {
 
 /// All the floating controls.
 class _ChromeOverlay extends StatelessWidget {
-  const _ChromeOverlay({required this.state});
+  const _ChromeOverlay({required this.state, required this.onClose});
 
   final CameraState state;
+
+  /// The ✕. It goes through the page rather than popping, because on the root
+  /// route there is nothing to pop — which is exactly what the button used to
+  /// do: nothing at all.
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -289,8 +445,8 @@ class _ChromeOverlay extends StatelessWidget {
               children: <Widget>[
                 GlassCircleButton(
                   icon: Icons.close,
-                  semanticLabel: 'Close camera',
-                  onPressed: () => Navigator.of(context).maybePop(),
+                  semanticLabel: 'Close Anchorage Harbor',
+                  onPressed: onClose,
                 ),
                 const Spacer(),
                 _FlashButton(state: state),
@@ -318,13 +474,19 @@ class _ChromeOverlay extends StatelessWidget {
                   alignment: Alignment.centerRight,
                   child: Padding(
                     padding: const EdgeInsets.only(right: 4),
+                    // The band across *every* rear camera, not the open
+                    // sensor's own: on a phone that publishes its ultra-wide
+                    // separately the open camera stops at 1x, and a slider
+                    // built from it could never offer the 0.5x the pills do.
                     child: VerticalZoomSlider(
-                      zoom: state.settings.zoom,
-                      minZoom: state.settings.minZoom,
-                      maxZoom: state.settings.maxZoom,
+                      zoom: state.effectiveZoom,
+                      minZoom: state.reachableZoomRange.min,
+                      maxZoom: state.reachableZoomRange.max,
                       height: height,
                       onZoomChanged: (double zoom) =>
                           bloc.add(CameraZoomChanged(zoom)),
+                      onZoomSettled: () =>
+                          bloc.add(const CameraZoomGestureEnded()),
                     ),
                   ),
                 );
@@ -335,7 +497,7 @@ class _ChromeOverlay extends StatelessWidget {
           // ------------------------------------------------- quick-zoom row
           ZoomStopSelector(
             stops: state.zoomStops,
-            zoom: state.settings.zoom,
+            zoom: state.effectiveZoom,
             onSelected: (ZoomStop stop) =>
                 bloc.add(CameraZoomStopSelected(stop)),
           ),
@@ -345,27 +507,43 @@ class _ChromeOverlay extends StatelessWidget {
           // ---------------------------------------------------- shutter row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 28),
+            // The shutter is centred on the *screen*, not spaced evenly between
+            // its neighbours. `spaceBetween` looks equivalent and is not: the
+            // thumbnail is 62 dp and the flip button 44, so the shutter used to
+            // sit 9 dp right of centre — enough to read as a mistake on a
+            // screen whose whole composition is symmetrical about it. Matching
+            // `Expanded` slots make the centring exact whatever the flanking
+            // controls weigh.
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: <Widget>[
-                BatchThumbnail(
-                  count: state.shotCount,
-                  latestPath: state.batch?.latest?.filePath,
-                  onTap: () => _openBatchReview(context, state),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: BatchThumbnail(
+                      count: state.shotCount,
+                      latestPath: state.batch?.latest?.filePath,
+                      onTap: () => _openBatchReview(context, state),
+                    ),
+                  ),
                 ),
                 ShutterButton(
                   isCapturing: state.isCapturing,
                   enabled: state.isReady && !state.isCapturing,
                   onPressed: () => bloc.add(const CameraShutterPressed()),
                 ),
-                GlassCircleButton(
-                  icon: Icons.flip_camera_android_outlined,
-                  semanticLabel: state.isFrontFacing
-                      ? 'Switch to the rear camera'
-                      : 'Switch to the front camera',
-                  size: 44,
-                  onPressed: () => _flip(context, state),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: GlassCircleButton(
+                      icon: Icons.flip_camera_android_outlined,
+                      semanticLabel: state.isFrontFacing
+                          ? 'Switch to the rear camera'
+                          : 'Switch to the front camera',
+                      size: 44,
+                      onPressed: () => _flip(context, state),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -474,10 +652,7 @@ class _SettingsButton extends StatelessWidget {
       iconSize: 22,
       onPressed: () => CameraSettingsSheet.show(
         context,
-        flashMode: state.flashMode,
         showsGrid: state.showsGrid,
-        onFlashModeSelected: (CaptureFlashMode mode) =>
-            bloc.add(CameraFlashModeSelected(mode)),
         onGridToggled: () => bloc.add(const CameraGridToggled()),
         onOpenUploads: () {
           Navigator.of(context).pop();
@@ -539,7 +714,11 @@ class _UploadBatchButton extends StatelessWidget {
                 ? null
                 : () => Navigator.of(context).pushNamed(HarborRoutes.uploads)),
         style: FilledButton.styleFrom(
-          backgroundColor: count > 0 ? colors.primary : colors.primary.withValues(alpha: 0.45),
+          // Solid in both states. Fading it while the batch is empty made a
+          // button that is perfectly usable — it opens the Upload Manager —
+          // look disabled, which is exactly what the reference's one strong
+          // blue call to action is not.
+          backgroundColor: colors.primary,
           disabledBackgroundColor: colors.primary.withValues(alpha: 0.35),
           foregroundColor: Colors.white,
           disabledForegroundColor: Colors.white60,

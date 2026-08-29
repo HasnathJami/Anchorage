@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
+import 'package:anchorage_harbor/domain/entities/bandwidth_policy.dart';
 import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/retry_policy.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
@@ -24,6 +25,8 @@ void main() {
 
   ProcessUploadQueue buildEngine({
     RetryPolicy policy = const RetryPolicy(),
+    BandwidthPolicy bandwidth = BandwidthPolicy.standard,
+    DateTime Function()? clock,
   }) =>
       ProcessUploadQueue(
         repository: repository,
@@ -31,7 +34,8 @@ void main() {
         connectivity: connectivity,
         scheduler: scheduler,
         retryPolicy: policy,
-        clock: () => now,
+        bandwidthPolicy: bandwidth,
+        clock: clock ?? () => now,
         // A seeded Random makes the jittered backoff reproducible, so the
         // tests assert on scheduling behaviour rather than on luck.
         random: Random(42),
@@ -47,6 +51,114 @@ void main() {
   tearDown(() async {
     await repository.dispose();
     await connectivity.dispose();
+  });
+
+  group('rule 3: a link that is up but too slow to use', () {
+    const BandwidthPolicy tight = BandwidthPolicy(
+      floorBytesPerSecond: 24 * 1024,
+      grace: Duration(seconds: 6),
+    );
+
+    /// A clock the transport advances one second per progress tick, so a run
+    /// of slow ticks actually spends the grace window.
+    (DateTime Function(), void Function()) tickingClock() {
+      DateTime current = now;
+      return (() => current, () => current = current.add(const Duration(seconds: 1)));
+    }
+
+    test('a transfer that stays under the floor is abandoned and parked',
+        () async {
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      // Eight seconds of 2 KB/s: well under the floor, well past the grace.
+      uploader.throughputTicks = List<int>.filled(8, 2 * 1024);
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      final report = await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(report.valueOrNull!.parkedForConnectivity, 1);
+      expect(
+        repository.byId(taskFixture().id)!.status,
+        UploadStatus.waitingForConnection,
+      );
+    });
+
+    test('it costs no attempt, exactly like losing the signal', () async {
+      // The whole point of treating it as connectivity: the file is fine, the
+      // server is fine, the network is not. Spending a retry on that would
+      // burn the budget the task needs when the link comes back.
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      uploader.throughputTicks = List<int>.filled(8, 2 * 1024);
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(repository.byId(taskFixture().id)!.attempt, 0);
+      expect(repository.byId(taskFixture().id)!.lastFailureKind,
+          UploadFailureKind.lowBandwidth);
+    });
+
+    test('the transfer is stopped rather than left running', () async {
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      uploader.throughputTicks = List<int>.filled(8, 2 * 1024);
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(uploader.cancelled, contains(taskFixture().id),
+          reason: 'holding a socket open on a dead link helps nobody');
+    });
+
+    test('a wake-up is requested, so it is retried when the link is worth it',
+        () async {
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      uploader.throughputTicks = List<int>.filled(8, 2 * 1024);
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(scheduler.connectedRequests, isNotEmpty);
+    });
+
+    test('a brief dip that recovers is not a collapse', () async {
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      // Two slow seconds, then the link comes back. The grace window measures
+      // a *continuous* slow spell, so this must complete normally.
+      uploader.throughputTicks = <int>[
+        2 * 1024,
+        2 * 1024,
+        1024 * 1024,
+        1024 * 1024,
+      ];
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      final report = await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(report.valueOrNull!.succeeded, 1);
+      expect(uploader.cancelled, isEmpty);
+    });
+
+    test('a fast link is never touched by the watchdog', () async {
+      final (DateTime Function() clock, void Function() advance) = tickingClock();
+      uploader.beforeTick = advance;
+      uploader.throughputTicks = List<int>.filled(8, 4 * 1024 * 1024);
+
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      final report = await buildEngine(bandwidth: tight, clock: clock)();
+
+      expect(report.valueOrNull!.succeeded, 1);
+      expect(report.valueOrNull!.parkedForConnectivity, 0);
+    });
   });
 
   group('an empty or ineligible queue', () {

@@ -72,6 +72,16 @@ abstract final class Formatters {
     return (value.substring(0, dot), value.substring(dot));
   }
 
+  /// "+0.7 EV", "-1.3 EV", "0 EV" — spoken by the brightness slider.
+  ///
+  /// Signed on purpose: exposure compensation is a *relative* adjustment, and
+  /// "0.7" without the sign reads as an absolute brightness it is not.
+  static String exposure(double ev) {
+    if (ev == 0) return '0 EV';
+    final String sign = ev > 0 ? '+' : '-';
+    return '$sign${ev.abs().toStringAsFixed(1)} EV';
+  }
+
   /// "3/5" for the retry attempt counter.
   static String attempts(int attempt, int maxAttempts) => '$attempt/$maxAttempts';
 }

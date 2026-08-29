@@ -5,7 +5,9 @@ import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/flash_policy.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_span.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_event.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_state.dart';
@@ -51,8 +53,12 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     required EnqueueBatch enqueueBatch,
     Uuid? uuid,
     DateTime Function() clock = DateTime.now,
-    Duration focusIndicatorDuration = const Duration(milliseconds: 1200),
+    // Four seconds, not the 1.2 it was. The reticle is now something the
+    // user *operates* - a padlock to hit and a slider to drag - and a control
+    // that disappears while you are reaching for it is not a control.
+    Duration focusIndicatorDuration = const Duration(seconds: 4),
     FlashPolicy flashPolicy = FlashPolicy.standard,
+    Duration zoomSettleDelay = defaultZoomSettleDelay,
   })  : _camera = camera,
         _permissions = permissions,
         _enqueueBatch = enqueueBatch,
@@ -60,6 +66,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
         _clock = clock,
         _focusIndicatorDuration = focusIndicatorDuration,
         _flashPolicy = flashPolicy,
+        _zoomSettleDelay = zoomSettleDelay,
         super(const CameraState()) {
     on<CameraStarted>(_onStarted, transformer: sequential());
     on<CameraPermissionRequested>(_onPermissionRequested, transformer: sequential());
@@ -71,14 +78,21 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     on<CameraZoomStopSelected>(_onZoomStopSelected, transformer: sequential());
     on<CameraPinchStarted>(_onPinchStarted, transformer: sequential());
     on<CameraPinchZoomed>(_onPinchZoomed, transformer: restartable());
+    on<CameraZoomGestureEnded>(_onZoomGestureEnded, transformer: sequential());
+    on<CameraZoomHandoverRequested>(_onZoomHandover, transformer: sequential());
     on<CameraFlashToggled>(_onFlashToggled, transformer: sequential());
-    on<CameraFlashModeSelected>(_onFlashModeSelected, transformer: sequential());
     on<CameraGridToggled>(
       (CameraGridToggled event, Emitter<CameraState> emit) =>
           emit(state.copyWith(showsGrid: !state.showsGrid)),
     );
     on<CameraTorchTimedOut>(_onTorchTimedOut, transformer: sequential());
     on<CameraFocusRequested>(_onFocusRequested, transformer: restartable());
+    on<CameraFocusLockToggled>(_onFocusLockToggled, transformer: sequential());
+    on<CameraExposureOffsetChanged>(
+      _onExposureOffsetChanged,
+      // Like zoom: a drag emits dozens a second and only the newest matters.
+      transformer: restartable(),
+    );
     on<CameraFocusIndicatorExpired>(_onFocusExpired, transformer: sequential());
     on<CameraShutterPressed>(_onShutterPressed, transformer: droppable());
     on<CameraShotDiscarded>(_onShotDiscarded, transformer: sequential());
@@ -100,6 +114,31 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   /// Zoom the current pinch gesture is measured against.
   double _pinchBaseZoom = 1;
 
+  /// How long the zoom must sit still before another camera is opened for it.
+  ///
+  /// A pinch produces dozens of values a second and a slider drag produces
+  /// one per frame. Opening a sensor takes a few hundred milliseconds and
+  /// blanks the preview while it does, so acting on every value that crosses
+  /// 1.0x reopened the camera over and over - the "screen loads" flicker.
+  /// Waiting for the finger to settle turns any number of crossings into
+  /// exactly one hand-over, at the moment the user has decided where they
+  /// want to be.
+  static const Duration defaultZoomSettleDelay = Duration(milliseconds: 300);
+
+  final Duration _zoomSettleDelay;
+
+  /// Armed while a zoom is asking for a camera that is not the open one.
+  Timer? _zoomSettle;
+
+  /// The zoom that timer is waiting to deliver.
+  double? _pendingEffectiveZoom;
+
+  /// True from the moment a hand-over starts until the new sensor is live.
+  ///
+  /// Zoom values that arrive in that window are dropped rather than queued:
+  /// they were measured against a camera that is already gone.
+  bool _handoverInFlight = false;
+
   /// The torch's idle deadline, and the moment it was armed.
   ///
   /// A cancellable [Timer] rather than an awaited delay: the flash handler is
@@ -107,6 +146,11 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   /// every other sequential event behind it for two minutes.
   Timer? _torchDeadline;
   DateTime? _torchArmedAt;
+
+  /// The reticle's dwell timer. A field rather than an awaited delay, because
+  /// it has to be re-armed from the exposure handler and cancelled outright by
+  /// the padlock.
+  Timer? _reticleDeadline;
 
   Future<void> _onStarted(CameraStarted event, Emitter<CameraState> emit) async {
     emit(
@@ -186,11 +230,18 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   Future<void> _onPaused(CameraPaused event, Emitter<CameraState> emit) async {
     _cancelTorchDeadline();
+    _cancelReticleDeadline();
+    _cancelPendingHandover();
     await _camera.dispose();
     emit(
       state.copyWith(
         phase: CameraPhase.idle,
         clearSession: true,
+        // A new controller starts at auto metering and 0 EV, so the state that
+        // described the old one must not survive it.
+        clearFocusPoint: true,
+        isMeteringLocked: false,
+        exposureOffset: 0,
         // Disposing the controller has already darkened the LED. Recording
         // that in the state is what stops the torch coming back lit on resume.
         flashMode: _flashPolicy.afterInterruption(state.flashMode),
@@ -224,14 +275,35 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   }
 
   /// Swaps the open sensor and re-applies the settings that outlive it.
-  Future<void> _openLens(CameraLens lens, Emitter<CameraState> emit) async {
-    emit(state.copyWith(phase: CameraPhase.initialising));
+  ///
+  /// [handover] marks the case where the user did not ask for a *camera*, they
+  /// asked for a zoom that only another camera can show. The work is identical
+  /// either way; the flag only tells the UI not to throw a cold-start spinner
+  /// over the chrome for it.
+  Future<void> _openLens(
+    CameraLens lens,
+    Emitter<CameraState> emit, {
+    bool handover = false,
+  }) async {
+    emit(
+      state.copyWith(
+        phase: CameraPhase.initialising,
+        isSwitchingLens: handover,
+      ),
+    );
+
     final Result<CameraSession> result = await _camera.selectLens(lens);
 
     result.fold(
-      (CameraSession session) =>
-          emit(state.copyWith(phase: CameraPhase.ready, session: session)),
-      (Failure failure) => emit(_failureState(failure)),
+      (CameraSession session) => emit(
+        state.copyWith(
+          phase: CameraPhase.ready,
+          session: session,
+          isSwitchingLens: false,
+        ),
+      ),
+      (Failure failure) =>
+          emit(_failureState(failure).copyWith(isSwitchingLens: false)),
     );
 
     if (state.isReady) await _restoreFlash(emit);
@@ -241,66 +313,76 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     CameraZoomChanged event,
     Emitter<CameraState> emit,
   ) async {
-    await _applyZoom(event.zoom, emit);
+    // The slider is a drag: treat it like the pinch and let the value settle
+    // before opening anything.
+    await _applyEffectiveZoom(event.zoom, emit, continuous: true);
   }
 
-  /// A quick-zoom button.
-  ///
-  /// Nearly always this is just "set the zoom": on a modern Android phone the
-  /// platform publishes one *logical* rear camera whose range already spans
-  /// the ultra-wide and the telephoto, so 0.5x and 2x are reachable without
-  /// changing cameras at all.
-  ///
-  /// The fallback exists for the devices where that is not true — some OEMs
-  /// publish each rear sensor separately, and there the open camera physically
-  /// cannot reach 0.5x. Rather than clamping the request and lighting a button
-  /// that did nothing, the nearest rear camera that *can* reach the ratio is
-  /// opened first.
+  /// A quick-zoom button. Its ratio is an *effective* zoom, exactly like the
+  /// slider's, so both go through the same placement.
   Future<void> _onZoomStopSelected(
     CameraZoomStopSelected event,
     Emitter<CameraState> emit,
   ) async {
-    if (!state.isReady) return;
-
-    final CameraSettings settings = state.settings;
-    final double ratio = event.stop.ratio;
-    final bool reachable = ratio >= settings.minZoom && ratio <= settings.maxZoom;
-
-    if (reachable) {
-      await _applyZoom(ratio, emit);
-      return;
-    }
-
-    final CameraLens? lens = _lensNearest(ratio);
-    if (lens == null || lens.id == state.session?.activeLens.id) {
-      // Nothing better exists; honour the tap as far as the hardware allows
-      // rather than silently ignoring it.
-      await _applyZoom(ratio, emit);
-      return;
-    }
-
-    await _openLens(lens, emit);
-    if (state.isReady) await _applyZoom(ratio, emit);
+    // A tap is a decision, not a drag. There is nothing to wait for.
+    await _applyEffectiveZoom(event.stop.ratio, emit, continuous: false);
   }
 
-  /// The rear camera whose native factor is closest to [ratio].
-  CameraLens? _lensNearest(double ratio) {
-    final List<CameraLens> candidates = state.backLenses;
-    if (candidates.isEmpty) return null;
+  /// The finger left the glass.
+  ///
+  /// Whatever the gesture was reaching for, now is the moment to go and get
+  /// it: no more values are coming, so a hand-over here cannot be undone by
+  /// the next one.
+  Future<void> _onZoomGestureEnded(
+    CameraZoomGestureEnded event,
+    Emitter<CameraState> emit,
+  ) async {
+    final double? pending = _pendingEffectiveZoom;
+    _cancelPendingHandover();
+    if (pending == null) return;
 
-    return candidates.reduce(
-      (CameraLens best, CameraLens lens) =>
-          (lens.zoomFactor - ratio).abs() < (best.zoomFactor - ratio).abs()
-              ? lens
-              : best,
-    );
+    add(CameraZoomHandoverRequested(pending));
+  }
+
+  /// Opens the camera a zoom needs, then sets it there.
+  ///
+  /// Resolves the placement again from current state rather than trusting the
+  /// event: by the time this runs the open camera may already be the right
+  /// one, and re-asking is cheaper than reasoning about whether it is.
+  Future<void> _onZoomHandover(
+    CameraZoomHandoverRequested event,
+    Emitter<CameraState> emit,
+  ) async {
+    if (!state.isReady) return;
+
+    final ZoomPlacement placement = state.zoomSpan.place(event.effective);
+
+    if (placement.lens.id == state.session?.activeLens.id) {
+      await _applyZoom(placement.sensorZoom, emit);
+      return;
+    }
+
+    _handoverInFlight = true;
+    try {
+      await _openLens(placement.lens, emit, handover: true);
+      if (!state.isReady) return;
+
+      // The new sensor reports its own band, so the same request has to be
+      // resolved again against it - on an ultra-wide, the user's 0.5x is that
+      // camera's own 1.0.
+      await _applyZoom(state.zoomSpan.place(event.effective).sensorZoom, emit);
+    } finally {
+      _handoverInFlight = false;
+    }
   }
 
   Future<void> _onPinchStarted(
     CameraPinchStarted event,
     Emitter<CameraState> emit,
   ) async {
-    _pinchBaseZoom = state.settings.zoom;
+    _pinchBaseZoom = state.effectiveZoom;
+    // A new gesture supersedes whatever the last one was about to do.
+    _cancelPendingHandover();
   }
 
   Future<void> _onPinchZoomed(
@@ -310,7 +392,63 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     // Multiplying the gesture scale by the zoom the pinch *started* from is
     // what makes the gesture feel anchored. Multiplying by the current zoom
     // instead compounds every frame and the preview rockets to maximum.
-    await _applyZoom(_pinchBaseZoom * event.scale, emit);
+    await _applyEffectiveZoom(
+      _pinchBaseZoom * event.scale,
+      emit,
+      continuous: true,
+    );
+  }
+
+  /// Sets the zoom the *user* asked for, opening another rear camera first if
+  /// that is the only way to reach it.
+  ///
+  /// The slider, the pinch and the quick-zoom pills all speak effective zoom -
+  /// the field of view relative to the main camera - because that is what
+  /// "0.5x" means to the person holding the phone. [ZoomSpan] owns the two
+  /// rules that turn it back into a camera and a sensor zoom; this method only
+  /// obeys them.
+  Future<void> _applyEffectiveZoom(
+    double effective,
+    Emitter<CameraState> emit, {
+    required bool continuous,
+  }) async {
+    // A value measured against a camera that is being replaced is meaningless
+    // by the time it could be applied.
+    if (!state.isReady || _handoverInFlight) return;
+
+    final ZoomSpan span = state.zoomSpan;
+    final ZoomPlacement placement = span.place(effective);
+    final bool needsAnotherCamera =
+        placement.lens.id != state.session?.activeLens.id;
+
+    if (!needsAnotherCamera) {
+      _cancelPendingHandover();
+      await _applyZoom(placement.sensorZoom, emit);
+      return;
+    }
+
+    if (!continuous) {
+      add(CameraZoomHandoverRequested(effective));
+      return;
+    }
+
+    // Mid-gesture. Go as far as the open camera can honestly go and remember
+    // where the finger actually wanted to be, rather than blanking the preview
+    // under a moving thumb.
+    _pendingEffectiveZoom = effective;
+    _zoomSettle?.cancel();
+    _zoomSettle = Timer(_zoomSettleDelay, () {
+      if (isClosed) return;
+      add(const CameraZoomGestureEnded());
+    });
+
+    await _applyZoom(span.active.sensorZoomFor(effective), emit);
+  }
+
+  void _cancelPendingHandover() {
+    _zoomSettle?.cancel();
+    _zoomSettle = null;
+    _pendingEffectiveZoom = null;
   }
 
   Future<void> _applyZoom(double requested, Emitter<CameraState> emit) async {
@@ -346,14 +484,6 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   ) async {
     if (state.session == null) return;
     await _applyFlashMode(_flashPolicy.next(state.flashMode), emit);
-  }
-
-  Future<void> _onFlashModeSelected(
-    CameraFlashModeSelected event,
-    Emitter<CameraState> emit,
-  ) async {
-    if (state.session == null || event.mode == state.flashMode) return;
-    await _applyFlashMode(event.mode, emit);
   }
 
   Future<void> _onTorchTimedOut(
@@ -456,9 +586,26 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
       requestedAt: _clock(),
     );
 
+    final bool wasLocked = state.isMeteringLocked;
+    final bool hadOffset = state.exposureOffset != 0;
+
     // The reticle appears immediately, before the platform confirms. A focus
     // indicator that waits for the hardware feels broken even when it works.
-    emit(state.copyWith(focusPoint: point));
+    //
+    // A tap elsewhere is a *new metering decision*, so it releases any lock and
+    // returns the brightness to neutral: both of those belonged to the old
+    // point, and carrying them to a new one is how a user ends up with a whole
+    // batch exposed for a subject they stopped photographing.
+    emit(
+      state.copyWith(
+        focusPoint: point,
+        isMeteringLocked: false,
+        exposureOffset: 0,
+      ),
+    );
+
+    if (wasLocked) await _camera.setMeteringLocked(false);
+    if (hadOffset) await _camera.setExposureOffset(0);
 
     final Result<void> result = await _camera.focusAt(point);
     final Failure? failure = result.failureOrNull;
@@ -466,19 +613,103 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
       emit(_failureState(failure));
     }
 
-    await Future<void>.delayed(_focusIndicatorDuration);
-    add(CameraFocusIndicatorExpired(point.requestedAt));
+    _armReticleDeadline(point.requestedAt);
   }
 
-  void _onFocusExpired(
+  /// The padlock.
+  Future<void> _onFocusLockToggled(
+    CameraFocusLockToggled event,
+    Emitter<CameraState> emit,
+  ) async {
+    // Nothing to lock onto without a metering point; the padlock is only ever
+    // rendered attached to a reticle, so this is belt and braces.
+    if (!state.isReady || state.focusPoint == null) return;
+
+    final bool locked = !state.isMeteringLocked;
+    emit(state.copyWith(isMeteringLocked: locked));
+
+    final Failure? failure = (await _camera.setMeteringLocked(locked)).failureOrNull;
+
+    if (failure != null) {
+      // Showing a closed padlock over metering that is still drifting is worse
+      // than showing nothing, so the state goes back rather than staying
+      // optimistic.
+      emit(
+        _failureState(failure).copyWith(isMeteringLocked: !locked),
+      );
+      _armReticleDeadline(state.focusPoint!.requestedAt);
+      return;
+    }
+
+    if (locked) {
+      // A lock the user cannot see is a lock they will forget they set, so the
+      // reticle loses its deadline for as long as the lock is on.
+      _cancelReticleDeadline();
+    } else {
+      _armReticleDeadline(state.focusPoint!.requestedAt);
+    }
+  }
+
+  /// The brightness slider under the reticle.
+  Future<void> _onExposureOffsetChanged(
+    CameraExposureOffsetChanged event,
+    Emitter<CameraState> emit,
+  ) async {
+    if (!state.isReady) return;
+
+    final ExposureRange range = state.exposureRange;
+    if (!range.canAdjust) return;
+
+    // Snapped to the sensor's own EV grid before anything else looks at it, so
+    // the slider and the hardware can never disagree about where it is.
+    final double ev = range.normalise(event.ev);
+
+    // Same argument as zoom: a finger held at either end of the track produces
+    // dozens of identical values a second, and the sensor ignores every one.
+    if (ev == state.exposureOffset) return;
+
+    emit(state.copyWith(exposureOffset: ev));
+
+    // Dragging is interaction. Without this the reticle - and the slider the
+    // user is currently holding - vanishes mid-gesture.
+    if (!state.isMeteringLocked && state.focusPoint != null) {
+      _armReticleDeadline(state.focusPoint!.requestedAt);
+    }
+
+    final Failure? failure = (await _camera.setExposureOffset(ev)).failureOrNull;
+    if (failure != null) emit(_failureState(failure));
+  }
+
+  Future<void> _onFocusExpired(
     CameraFocusIndicatorExpired event,
     Emitter<CameraState> emit,
-  ) {
+  ) async {
+    // A locked reticle has no deadline. The lock is the user's to release.
+    if (state.isMeteringLocked) return;
+
     // Only clear the reticle this event was scheduled for; a newer tap must
     // keep its own indicator.
-    if (state.focusPoint?.requestedAt == event.requestedAt) {
-      emit(state.copyWith(clearFocusPoint: true));
-    }
+    if (state.focusPoint?.requestedAt != event.requestedAt) return;
+
+    final bool hadOffset = state.exposureOffset != 0;
+    emit(state.copyWith(clearFocusPoint: true, exposureOffset: 0));
+
+    // The brightness belonged to the metering point that has just gone. Leaving
+    // it applied would be an invisible setting - the one thing a camera must
+    // never have.
+    if (hadOffset) await _camera.setExposureOffset(0);
+  }
+
+  void _armReticleDeadline(DateTime token) {
+    _cancelReticleDeadline();
+    _reticleDeadline = Timer(_focusIndicatorDuration, () {
+      if (!isClosed) add(CameraFocusIndicatorExpired(token));
+    });
+  }
+
+  void _cancelReticleDeadline() {
+    _reticleDeadline?.cancel();
+    _reticleDeadline = null;
   }
 
   Future<void> _onShutterPressed(
@@ -595,6 +826,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     // Before the sensor goes, so a pending deadline cannot fire an event into
     // a closed Bloc.
     _cancelTorchDeadline();
+    _cancelReticleDeadline();
     await _camera.dispose();
     return super.close();
   }

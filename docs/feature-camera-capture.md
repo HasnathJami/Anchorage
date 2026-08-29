@@ -77,6 +77,30 @@ A `RotatedBox`-wrapped Material `Slider` inverts its own gesture axis — draggi
 decreases the value — and cannot place labels inside the track the way the reference does.
 `VerticalZoomSlider` is ~90 lines of `GestureDetector` + `LayoutBuilder`, and behaves.
 
+### The offered band is 0.5x – 8x
+
+`ZoomRange.fromSensor` intersects what the *product* offers with what the *sensor* admits,
+once, when a camera opens. Everything downstream — the slider's end labels, the quick-zoom
+stops, the clamp inside `setZoom` — reads that one value rather than calling
+`getMinZoomLevel` / `getMaxZoomLevel` for itself.
+
+**The 8x ceiling is a decision, not a hardware limit.** Plenty of phones report 10x or 30x.
+Past roughly 8x they are upscaling, and those numbers also cost something concrete: the
+reference design's slider is a ~230 dp column, and mapping 1x–30x onto it leaves the 1x–3x
+band people actually use about twenty pixels tall.
+
+**The 0.5x floor is the hardware's to grant.** You cannot see wider than the lens, so a
+sensor reporting a 1.0 minimum is offered from 1.0 — putting a 0.5 button on it would be a
+control the platform rejects. A sensor reporting something *wider* than 0.5 is pinned to
+0.5, and one reporting 0.6 keeps 0.6 exactly, so the tap lands where the hardware stops
+instead of being clamped.
+
+`CameraState.reachableZoomRange` then widens that to what the **device** can reach, by
+folding in the native factor of every rear camera. That matters on the phones that publish
+each sensor separately: there the open camera stops at 1x, and a row built from its range
+alone would never show a 0.5 button — leaving the lens-switching fallback below unreachable
+from the UI.
+
 ### The quick-zoom stops are ratios, not cameras
 
 This is the part that was wrong, and it is worth writing down properly because the wrong
@@ -126,7 +150,38 @@ the app opened on a distorted wide-angle frame nobody had asked for.
 
 ---
 
-## 3. Tap-to-focus
+## 2a. Closing the app
+
+The camera is the app's **root route**. That single fact caused a defect and shapes the fix.
+
+The ✕ called `Navigator.maybePop()`. On the root route there is nothing to pop, so the button
+did nothing whatsoever — no error, no animation, no clue. It looked disabled, which is the
+worst kind of broken.
+
+Both the ✕ and the system back gesture now route through one method. `PopScope(canPop: false)`
+intercepts the platform back so the two gestures cannot diverge, and a re-entry flag stops a
+back press arriving during the dialog's own async gap from stacking a second copy.
+
+The confirmation is not a generic *are you sure*. It says what closing costs, which depends
+on the batch:
+
+| Batch | What it says | Actions |
+| --- | --- | --- |
+| Empty | The queue is durable and keeps syncing in the background | `CLOSE` / `CANCEL` |
+| *n* unsent shots | Those *n* have not reached the sync engine and will stay on the device, outside the queue | `UPLOAD & CLOSE` / `CLOSE ANYWAY` / `CANCEL` |
+
+`UPLOAD & CLOSE` enqueues first and closes second — and **does not close** if the enqueue
+fails, because closing then would do exactly the thing the user chose to avoid. Dismissing
+the dialog by tapping outside or pressing back counts as *cancel*: not answering a question
+must never be read as consent.
+
+The app closes with `SystemNavigator.pop()`, never `exit(0)`. It asks the platform to finish
+the activity, letting Flutter and the plugins shut down in order; killing the process
+outright is how a half-written SQLite transaction becomes a corrupted queue.
+
+---
+
+## 3. Tap-to-focus, metering lock and brightness
 
 `CameraFocusRequested(x, y)` carries **normalised** preview coordinates (0–1 on both axes), so
 the domain never has to know the preview's pixel size or rotation. Out-of-bounds values are
@@ -140,8 +195,68 @@ waits for the hardware feels broken even when it works. It is cleared by a dwell
 carries the requesting timestamp, so a newer tap keeps its own indicator instead of being
 cancelled by the older one's expiry.
 
-Visually it is a yellow square that snaps in and settles (`Curves.easeOutBack`), mirroring the
-platform camera apps the user already knows.
+### The reticle has three parts
+
+Modelled on the platform camera apps, because the familiarity *is* the feature — nobody
+reads a manual for a viewfinder.
+
+```
+            🔓          ← padlock: holds focus + exposure
+          ╭────╮
+         │      │       ← ring: where the sensor is metering
+          ╰────╯
+        ──────☀──────   ← brightness: exposure compensation
+```
+
+| Part | Behaviour |
+| --- | --- |
+| **Ring** | Decorative and wrapped in `IgnorePointer`, so a tap that lands inside it re-meters there rather than being swallowed. Snaps in with `Curves.easeOutBack`. |
+| **Padlock** | Locks focus **and** exposure together. Open by default, closed while locked. |
+| **Brightness** | A sun on a track, setting exposure compensation for this metering point. Absent entirely on a sensor that has none. |
+
+The whole thing is positioned so the **ring** sits on the tap, not the widget's bounding box:
+the padlock overhangs the top and the slider hangs below, and centring the box would put the
+reticle visibly above the finger. It is also clamped to the preview, because a reticle half
+off the screen has a slider that cannot be dragged and a padlock that cannot be hit.
+
+It is a **sibling** of the preview's gesture detector rather than its child. Nested inside,
+every tap on the padlock would also register as "re-meter here".
+
+### Why focus and exposure lock together
+
+The hardware exposes them separately (`FocusMode.locked`, `ExposureMode.locked`) and every
+camera app the user has held presents them as one padlock — because the situation the control
+exists for is one situation: *I have framed this, stop changing it.* Splitting them would be
+more faithful to the hardware and less faithful to the intent.
+
+The adapter locks **exposure first**. Locking focus is instant, but locking exposure while
+the sensor is still converging bakes in whatever brightness it happened to be passing
+through, and the visible result is a frame that darkens the moment the padlock closes.
+
+### Three rules that keep it honest
+
+1. **A locked reticle does not fade.** The dwell timer is cancelled while the padlock is
+   closed. A lock the user cannot see is a lock they forget they set, and every photograph
+   afterwards is metered for a subject they walked away from.
+2. **A tap elsewhere is a new metering decision.** It releases the lock and returns the
+   brightness to neutral: both belonged to the old point, and carrying them to a new one is
+   how a whole batch ends up exposed for a subject nobody is photographing any more.
+3. **Nothing survives invisibly.** When the reticle fades, the exposure returns to 0 EV; when
+   the sensor is released, the lock goes with it, because a new controller starts at auto.
+
+The dwell is **four seconds**, not the 1.2 it was: the reticle is now something the user
+*operates*, and a control that disappears while you are reaching for it is not a control.
+Dragging the brightness re-arms the timer, so it cannot vanish under a finger. The timer is a
+cancellable `Timer` field rather than an awaited delay, precisely because it has to be
+re-armed from one handler and cancelled outright by another.
+
+### Exposure compensation is snapped, not free-form
+
+Android reports the range in *steps* — commonly ±2 EV in thirds — and a value off that grid is
+rejected or silently rounded, which leaves the sun sitting at a number the sensor is not
+using. `ExposureRange.normalise` clamps and snaps before anything else looks at the value,
+and it anchors the grid at **0** rather than at `min`: neutral exposure is the one value the
+user must be able to return to exactly.
 
 ---
 
@@ -175,7 +290,7 @@ the sensor and the preview combined. Two rules follow, both in `FlashPolicy`:
   *other* mode is restored exactly as it was — over-correcting into "reset everything" would
   just be the reverting-flash bug wearing a hat.
 * **It has a deadline.** Two idle minutes and the torch switches itself off, announced in a
-  snackbar rather than done silently: a light going out on its own is confusing unless the app
+  toast rather than done silently: a light going out on its own is confusing unless the app
   says it was deliberate. The deadline is a cancellable `Timer`, not an awaited delay — the
   flash handler is `sequential`, so awaiting a two-minute timeout inside it would stall every
   other sequential event behind it.
@@ -331,6 +446,8 @@ ceremony. The *logic* stays behind the port; only the pixels reach through.
 | zoom | slider value clamped to range; **pinch measured from its origin, not compounded**; a zoom that has not moved is never sent to the platform |
 | quick-zoom stops | **a single rear camera that can zoom still gets a row**; a reachable ratio just sets the zoom; an unreachable one opens the rear camera that can |
 | focus | reticle shown and normalised coordinates forwarded; out-of-bounds tap clamped |
+| metering lock | the padlock holds focus and exposure together; a second tap releases; **a locked reticle outlives its dwell timer** and an unlocked one does not; a tap elsewhere releases and re-meters; a sensor that refuses the lock does not show a padlock anyway; releasing the sensor drops the lock |
+| brightness | snapped to the sensor grid; clamped beyond it; a value that has not moved is never sent; **the reticle expiring returns the exposure to neutral**; a sensor with no compensation ignores the slider |
 | capture and batching | each press adds one shot; failed capture adds no phantom shot; **a discard leaves the batch *and* the disk**; discarding an unknown id deletes nothing; submit hands every shot to the queue and starts a fresh batch; empty batch is a no-op |
 | lens selection | switching re-opens and bumps `previewKey`; the front camera is never a zoom-stop candidate |
 

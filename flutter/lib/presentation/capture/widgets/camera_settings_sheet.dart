@@ -1,7 +1,6 @@
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:anchorage_harbor/data/datasources/mock_upload_api.dart';
 import 'package:anchorage_harbor/di/injector.dart';
-import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:flutter/material.dart';
 
 /// What the gear in the top bar opens.
@@ -9,9 +8,15 @@ import 'package:flutter/material.dart';
 /// The reference design puts a settings icon on the camera and shows nothing
 /// behind it, so the contents are a judgement call. The rule applied here: a
 /// control earns a place on the *preview* only if it is used while composing a
-/// shot. Flash and zoom are; picking a flash mode from a list of four and
-/// turning a composition grid on are not, so they live here and the preview
-/// stays as uncluttered as the reference.
+/// shot. Flash and zoom are, and both sit on the preview; turning a
+/// composition grid on is not, so it lives here and the preview stays as
+/// uncluttered as the reference.
+///
+/// Flash was briefly listed here as well, as an explicit four-way choice,
+/// while the top bar already carried a cycling button for the same setting.
+/// Two controls for one setting is two places to look and one to forget, so
+/// the list went and the button stayed: it steps through the whole of
+/// `FlashPolicy.cycle`, so no mode became unreachable by dropping the list.
 ///
 /// The mock-transport switch is here for the same reason. The brief supplies
 /// no API, so the app ships with a scripted one; being able to force a
@@ -21,25 +26,19 @@ import 'package:flutter/material.dart';
 /// engine reads it.
 class CameraSettingsSheet extends StatefulWidget {
   const CameraSettingsSheet({
-    required this.flashMode,
     required this.showsGrid,
-    required this.onFlashModeSelected,
     required this.onGridToggled,
     required this.onOpenUploads,
     super.key,
   });
 
-  final CaptureFlashMode flashMode;
   final bool showsGrid;
-  final ValueChanged<CaptureFlashMode> onFlashModeSelected;
   final VoidCallback onGridToggled;
   final VoidCallback onOpenUploads;
 
   static Future<void> show(
     BuildContext context, {
-    required CaptureFlashMode flashMode,
     required bool showsGrid,
-    required ValueChanged<CaptureFlashMode> onFlashModeSelected,
     required VoidCallback onGridToggled,
     required VoidCallback onOpenUploads,
   }) {
@@ -48,9 +47,7 @@ class CameraSettingsSheet extends StatefulWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) => CameraSettingsSheet(
-        flashMode: flashMode,
         showsGrid: showsGrid,
-        onFlashModeSelected: onFlashModeSelected,
         onGridToggled: onGridToggled,
         onOpenUploads: onOpenUploads,
       ),
@@ -62,25 +59,18 @@ class CameraSettingsSheet extends StatefulWidget {
 }
 
 class _CameraSettingsSheetState extends State<CameraSettingsSheet> {
-  late CaptureFlashMode _flashMode = widget.flashMode;
   late bool _showsGrid = widget.showsGrid;
 
-  static const Map<CaptureFlashMode, String> _flashLabels =
-      <CaptureFlashMode, String>{
-    CaptureFlashMode.off: 'OFF',
-    CaptureFlashMode.auto: 'AUTO',
-    CaptureFlashMode.always: 'ON',
-    CaptureFlashMode.torch: 'TORCH',
-  };
-
+  /// Two outcomes, because a server has two answers.
+  ///
+  /// `LOW BANDWIDTH` and `NO INTERNET` used to be here and were removed on
+  /// purpose: those are conditions of the *link*, the app now reads them from
+  /// the device itself, and a scripted copy of them proved nothing. `hang` is
+  /// absent for a different reason — see its doc comment.
   static const Map<MockUploadBehaviour, String> _mockLabels =
       <MockUploadBehaviour, String>{
     MockUploadBehaviour.succeed: 'SUCCESS',
-    MockUploadBehaviour.failLowBandwidth: 'LOW BANDWIDTH',
-    MockUploadBehaviour.failNoConnection: 'NO INTERNET',
-    MockUploadBehaviour.failServerRetryable: 'SERVER 503',
-    MockUploadBehaviour.failServerPermanent: 'SERVER 400',
-    MockUploadBehaviour.flaky: 'FLAKY',
+    MockUploadBehaviour.fail: 'FAILED',
   };
 
   @override
@@ -123,25 +113,6 @@ class _CameraSettingsSheetState extends State<CameraSettingsSheet> {
               ),
               const SizedBox(height: HarborSpacing.lg),
 
-              _SectionLabel('FLASH'),
-              const SizedBox(height: HarborSpacing.xs),
-              Wrap(
-                spacing: HarborSpacing.xs,
-                children: _flashLabels.entries
-                    .map(
-                      (MapEntry<CaptureFlashMode, String> entry) => _Chip(
-                        label: entry.value,
-                        selected: _flashMode == entry.key,
-                        onTap: () {
-                          setState(() => _flashMode = entry.key);
-                          widget.onFlashModeSelected(entry.key);
-                        },
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-
-              const SizedBox(height: HarborSpacing.lg),
               _SectionLabel('COMPOSITION'),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
@@ -219,8 +190,9 @@ class _MockTransportSectionState extends State<_MockTransportSection> {
         _SectionLabel('MOCK API RESPONSE'),
         const SizedBox(height: HarborSpacing.xxs),
         Text(
-          'The brief supplies no server. Choose what the next upload attempt '
-          'should meet.',
+          'The brief supplies no server. Choose what the far end says. '
+          'Connection loss and low bandwidth are read from the device, not '
+          'from here.',
           style: TextStyle(color: colors.textSecondary, fontSize: 12, height: 1.4),
         ),
         const SizedBox(height: HarborSpacing.xs),

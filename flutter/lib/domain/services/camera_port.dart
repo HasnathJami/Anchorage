@@ -1,5 +1,6 @@
 import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
 
 /// The domain's view of the camera hardware.
@@ -23,6 +24,18 @@ abstract interface class CameraPort {
 
   /// Focus and exposure at a normalised preview point.
   Future<Result<void>> focusAt(FocusPoint point);
+
+  /// Holds focus and exposure where they are, or hands them back to the sensor.
+  ///
+  /// The two are locked together on purpose. Every camera app the user has
+  /// held — the platform ones included — presents this as one padlock, because
+  /// the situation it exists for is one situation: *I have framed this, stop
+  /// changing it.* Splitting AF and AE into separate controls would be more
+  /// faithful to the hardware and less faithful to the intent.
+  Future<Result<void>> setMeteringLocked(bool locked);
+
+  /// Exposure compensation in EV, clamped and snapped by the implementation.
+  Future<Result<void>> setExposureOffset(double ev);
 
   /// Takes a picture and persists it to app-private storage.
   Future<Result<CapturedShot>> capture({required double zoomLevel});
@@ -52,10 +65,15 @@ class CameraSession {
     required this.availableLenses,
     required this.activeLens,
     required this.previewKey,
+    this.exposureRange = ExposureRange.fixed,
   });
 
   final double previewAspectRatio;
   final CameraSettings settings;
+
+  /// What this sensor will accept as exposure compensation. Read once when the
+  /// camera opens, like the zoom range and for the same reason.
+  final ExposureRange exposureRange;
   final List<CameraLens> availableLenses;
   final CameraLens activeLens;
 
@@ -69,6 +87,7 @@ class CameraSession {
     List<CameraLens>? availableLenses,
     CameraLens? activeLens,
     int? previewKey,
+    ExposureRange? exposureRange,
   }) {
     return CameraSession(
       previewAspectRatio: previewAspectRatio ?? this.previewAspectRatio,
@@ -76,6 +95,7 @@ class CameraSession {
       availableLenses: availableLenses ?? this.availableLenses,
       activeLens: activeLens ?? this.activeLens,
       previewKey: previewKey ?? this.previewKey,
+      exposureRange: exposureRange ?? this.exposureRange,
     );
   }
 }

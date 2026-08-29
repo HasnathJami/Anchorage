@@ -26,9 +26,15 @@ the same button, they should be one case. This is why `PermissionDenied` and
 breaks the `when`/`switch` in the presentation layer until someone decides what the user
 sees.
 
-**5. Persistent states get banners; momentary events get snackbars.** A missing permission is
-a *state* — a toast that vanishes in four seconds leaves a screen that looks inexplicably
-inert. Being out of range at the instant you tapped is an *event*.
+**5. Persistent states get banners; momentary events get toasts.** A missing permission is
+a *state* — a toast that vanishes in a couple of seconds leaves a screen that looks
+inexplicably inert. Being out of range at the instant you tapped is an *event*.
+
+On the camera the toast is `HarborToast`, at the **top** of the screen rather than the
+bottom, because the bottom edge is the shutter and a confirmation of the shot just taken
+must not cover the control the user is about to press again. A confirmation dwells for
+`HarborToast.brief` (2.5 s); anything the user has to read and act on gets
+`HarborToast.standard` (4 s).
 
 **6. A message without a remedy is half an answer.** Every banner carries an action.
 

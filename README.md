@@ -125,7 +125,7 @@ Two screens: `CameraPreviewScreen` and the Upload Manager.
 | Pinch-to-zoom | `CameraPinchStarted` / `CameraPinchZoomed`, anchored to the zoom the gesture began at |
 | Zoom slider | `VerticalZoomSlider` — hand-built, because a rotated Material `Slider` inverts its own drag axis |
 | Rounded zoom buttons (0.5x, 1x, 2x) | `ZoomStopSelector` over the `ZoomLadder` policy — see [Why the zoom buttons are ratios, not cameras](#why-the-zoom-buttons-are-ratios-not-cameras) |
-| Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle`, shown optimistically and cleared on a dwell timer |
+| Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle` — a ring, an AE/AF padlock and a brightness slider, shown optimistically and cleared on a dwell timer |
 | Batch capture with a "Pending Uploads" list | `CaptureBatch` → `BatchReviewSheet` → `EnqueueBatch` → `UploadManagerPage` |
 | Background worker monitoring connectivity | `WorkManagerScheduler` + `syncCallbackDispatcher` |
 | Images stay queued on failure | SQLite-backed `UploadQueueRepositoryImpl`; nothing leaves the queue until the server acknowledges it |
@@ -138,16 +138,80 @@ Read top to bottom, exactly as the reference design is laid out.
 
 | Control | Behaviour |
 | --- | --- |
-| **✕**, top left | Leaves the camera; the sensor is released with the route. |
+| **✕**, top left | Asks before closing the app — see [Closing the app](#closing-the-app). It used to call `maybePop`, which on the root route pops nothing: the button did nothing at all. |
 | **Flash**, top right | Cycles off → auto → on → torch. The *glyph* changes with the mode, so the state is never carried by colour alone. The torch has an idle deadline so a pocketed phone does not cook its own LED. |
-| **⚙**, top right | Opens `CameraSettingsSheet`: flash as an explicit four-way choice, a rule-of-thirds grid, the mock-transport switch, and a route to the Upload Manager. |
-| **Viewfinder** | Tap to focus *and* meter exposure — tapping a dark corner and getting a sharp but unreadable frame is not what the gesture means. Pinch to zoom, anchored to where the gesture started. |
-| **Vertical slider**, right edge | Absolute zoom, labelled with the sensor's real minimum and maximum. Drag up zooms in. |
+| **⚙**, top right | Opens `CameraSettingsSheet`: a rule-of-thirds grid, the mock-transport switch, and a route to the Upload Manager. Flash is deliberately absent — it lives on the top bar, and one setting with two controls is one control too many. |
+| **Viewfinder** | Tap to focus *and* meter exposure — tapping a dark corner and getting a sharp but unreadable frame is not what the gesture means. Pinch to zoom, anchored to where the gesture started. See [The focus reticle](#the-focus-reticle-lock-and-brightness). |
+| **Vertical slider**, right edge | Absolute zoom across the offered band, labelled at both ends. Drag up zooms in. |
 | **0.5 / 1 / 2**, above the shutter | Quick zoom. The selected pill reads the *live* value (`1.7x`) whenever the zoom sits between stops. |
 | **Thumbnail + badge**, bottom left | Opens `BatchReviewSheet` — the shots that have **not** been handed over yet, where a blurred frame can still be dropped for free. With an empty batch it goes to the Upload Manager instead. |
 | **Shutter** | One photograph per completed capture; the event is `droppable`, so hammering the button cannot queue twelve. |
 | **Flip**, bottom right | Front ⇄ rear. |
 | **UPLOAD BATCH (n)** | Hands the batch to the sync engine and starts a fresh one. With nothing captured it reads `UPLOAD MANAGER` and goes there, rather than sitting grey through the whole of a first run. |
+
+The thumbnail, shutter and lens-flip button share one centre line, and the shutter is centred
+on the screen rather than merely spaced evenly between two neighbours of different widths.
+
+#### The focus reticle: lock and brightness
+
+Tapping the viewfinder does not just focus. It places a reticle modelled on the platform
+camera apps — the familiarity *is* the feature, because nobody reads a manual for a
+viewfinder:
+
+* **A ring** marks where the sensor is metering. Non-interactive, so a tap inside it
+  re-meters there rather than being swallowed.
+* **A padlock** on the ring at twelve o'clock holds focus *and* exposure. Open by default,
+  closed while locked. The two are locked together on purpose: every camera app presents this
+  as one control, because the situation it exists for is one situation — *I have framed this,
+  stop changing it.*
+* **A brightness slider** beneath — a sun on a track — sets exposure compensation for this
+  metering point.
+
+Three rules make it behave the way people expect:
+
+1. **A locked reticle does not fade.** The dwell timer is cancelled while the padlock is
+   closed. A lock the user cannot see is a lock they forget they set, and every photograph
+   afterwards is metered for a subject they walked away from.
+2. **A tap elsewhere is a new metering decision.** It releases the lock and returns the
+   brightness to neutral, because both belonged to the old point.
+3. **Nothing survives invisibly.** When the reticle fades, the exposure goes back to 0 EV —
+   and releasing the sensor drops the lock with it, because a new controller starts at auto.
+
+Exposure compensation is reported by Android in *steps* (commonly ±2 EV in thirds), and a
+value off that grid is rejected or silently rounded. `ExposureRange` snaps every value before
+anything else sees it, so the sun and the sensor can never disagree about where it is.
+
+#### Closing the app
+
+The camera is the app's root route, so the ✕ and the system back gesture both mean "close
+Anchorage Harbor", not "pop a screen". Both go through one confirmation, and it is not a
+generic *are you sure*: it says what closing actually costs.
+
+Photographs live in the working batch from the moment the shutter fires until **UPLOAD
+BATCH** hands them to the queue, and only the queue is durable. So when the batch is empty
+the dialog says the queue keeps syncing in the background and offers **CLOSE** / **CANCEL**.
+When it is not, it names the count and adds **UPLOAD & CLOSE**, which enqueues first and
+closes second — and does not close at all if the enqueue fails, because closing then would do
+exactly the thing the user chose to avoid. Backing out of the dialog counts as *stay*.
+
+The app closes with `SystemNavigator.pop()`, not `exit(0)`: it asks the platform to finish
+the activity so Flutter and the plugins shut down in order. Killing the process outright is
+how a half-written SQLite transaction becomes a corrupted queue.
+
+#### The zoom band: 0.5x – 8x
+
+The controls are designed around 0.5x – 8x, and `ZoomRange` intersects that with what the
+open sensor will admit:
+
+* **The 8x ceiling is a product decision.** Plenty of phones report 10x or 30x; past roughly
+  8x they are upscaling, not zooming. Those extra numbers also cost something real — mapping
+  1x–30x onto the reference design's ~230 dp slider makes the 1x–3x band people actually use
+  about twenty pixels tall.
+* **The 0.5x floor is the hardware's to grant.** You cannot see wider than the lens, so a
+  sensor that starts at 1x is offered from 1x. Most modern Androids publish a rear camera
+  whose range already reaches 0.5; where instead the ultra-wide is a *separate* camera, the
+  quick-zoom row still offers 0.5 and tapping it switches to that camera — the row is built
+  from what the **device** can reach, not just the sensor that happens to be open.
 
 #### Why the zoom buttons are ratios, not cameras
 
@@ -196,6 +260,25 @@ rule is removed.
    with no progress is returned to the queue at the top of the next sweep. Without both
    halves the queue either sends a file twice or strands it forever.
 
+### What actually starts a sweep
+
+The rules above say what a sweep *does*. Equally important is when one begins, because an
+engine that is correct but only runs every fifteen minutes looks broken:
+
+| Trigger | Where |
+| --- | --- |
+| App launch | `UploadManagerBloc` — drains a queue left behind by a previous run |
+| **The link becomes stable** | `UploadManagerBloc` — the brief's requirement in one line: no button, no user action |
+| **New work is queued** | `UploadManagerBloc` — tapping `UPLOAD BATCH` on an already-stable link used to upload nothing until WorkManager next woke; the rows just sat at `IN QUEUE` |
+| **A backoff elapses** | `UploadManagerBloc` — a retry scheduled four seconds out had no foreground trigger at all, so the row read `RETRYING...` and then did nothing for fifteen minutes |
+| OS wake-up, app closed | `WorkManagerScheduler` — a one-shot constrained to `NetworkType.connected`, plus a 15-minute periodic safety net |
+
+Only the first two existed at first. The last two are what make the engine look as resilient
+as it is, and each has a test that fails without it. The third and fourth needed a matching
+fix underneath: `claim` and `requeueStalled` now republish the queue **only when they change
+it**, because the reaper runs at the top of every sweep and an unconditional notification
+would have put the engine in a permanent sweep-notify-sweep loop.
+
 Retries use **exponential backoff with full jitter** (4 s → 8 s → 16 s …, capped at 15 min,
 randomised across `[0, computed]`). Jitter matters: twelve photographs fail together when a
 tunnel swallows the signal, and without it all twelve wake at the same millisecond.
@@ -207,9 +290,9 @@ brief permits:
 
 * **`MockUploadApi`** is a *working* transport, not a stub. It streams realistic progress at
   a configurable throughput, fails at a configurable point, and returns the full failure
-  taxonomy — success, mid-transfer low bandwidth, no internet, retryable 503, permanent 400,
-  and hang-until-timeout. A switcher inside the camera's **⚙ settings sheet** changes its
-  behaviour live, so every path can be demonstrated on a real device in seconds. It sits
+  taxonomy. A switcher inside the camera's **⚙ settings sheet** offers two outcomes named
+  for what the *user* would experience rather than for a status code — success, low
+  bandwidth, no internet, and server error — and changes the behaviour live, so every path can be demonstrated on a real device in seconds. It sits
   there rather than on the Upload Manager because the reference design's bottom bar carries
   one button and nothing else.
 * **`http_upload_api.dart`** is the production HTTP implementation, written out in full and
@@ -392,9 +475,9 @@ flutter build apk --release # -> build/app/outputs/flutter-apk/app-release.apk
 2. Take several photographs, then tap the **thumbnail** to review the batch and drop a frame
    you do not want. Discarding deletes the file, not just the list entry.
 3. Tap **UPLOAD BATCH (n)**. The batch is written to SQLite before anything is sent.
-4. Open **⚙ → MOCK API RESPONSE** and pick `LOW BANDWIDTH`, `SERVER 503` or `SERVER 400`,
-   then watch the Upload Manager: retryable failures back off and return, a 400 fails once
-   and stops.
+4. Open **⚙ → MOCK API RESPONSE** and pick one of the two outcomes — `SUCCESS` or
+   `FAILED` — then watch the Upload Manager. `FAILED` is a retryable 500, so one
+   tap shows both halves of the policy: back off and retry a 5xx, stop dead on a 4xx.
 5. For the real thing, turn off Wi-Fi and mobile data. The rows move to
    `WAITING FOR CONNECTION` and resume by themselves within a few seconds of the network
    returning — no button, no app restart. Kill the app entirely and WorkManager finishes the
@@ -414,15 +497,15 @@ over pure domain code, with fakes standing in for hardware.
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
-| `flutter` | 140 | Camera Bloc incl. flash, zoom stops and discard (32), sync engine incl. claim + lease (25), sync domain (17), formatters (16), zoom ladder (12), camera chrome widgets (10), upload manager Bloc (9), upload manager widgets (8), flash policy (7), architecture (4) |
-| **Total** | **269** | |
+| `flutter` | 277 | Camera Bloc (52), sync engine incl. claim, lease + the bandwidth watchdog (31), sync domain (17), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the five sweep triggers (16), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
+| **Total** | **347** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
 cd android  && ./gradlew test        # 129 tests
-cd ../flutter && flutter test        # 140 tests
+cd ../flutter && flutter test        # 277 tests
 ```
 
 Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.

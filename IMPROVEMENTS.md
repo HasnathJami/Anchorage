@@ -50,8 +50,12 @@ implementation of the requirement has a specific, demonstrable failure mode on a
 29. [Pinch zoom anchored to the gesture's origin](#29-pinch-zoom-anchored-to-the-gestures-origin)
 30. [Quick-zoom stops built from the sensor's range, not the camera count](#30-quick-zoom-stops-built-from-the-sensors-range-not-the-camera-count)
 30a. [The batch review sheet — a last free moment to drop a frame](#30a-the-batch-review-sheet--a-last-free-moment-to-drop-a-frame)
+30b. [Closing the app is a question, not an accident](#30b-closing-the-app-is-a-question-not-an-accident)
+30c. [The zoom band is a decision, and the shutter is actually centred](#30c-the-zoom-band-is-a-decision-and-the-shutter-is-actually-centred)
+30d. [Tap-to-focus that is a control, not a decoration](#30d-tap-to-focus-that-is-a-control-not-a-decoration)
 31. [Serial uploads, and a re-check between files](#31-serial-uploads-and-a-re-check-between-files)
 32. [An in-flight guard, and the claim that the guard cannot replace](#32-an-in-flight-guard-and-the-claim-that-the-guard-cannot-replace)
+32a. [Four reasons to sweep, not one](#32a-four-reasons-to-sweep-not-one)
 33. [Manual retry resets the attempt budget](#33-manual-retry-resets-the-budget)
 34. [Pause / resume that the engine actually respects](#34-pause-and-resume)
 
@@ -525,11 +529,17 @@ Switching is one line in `injector.dart`.
 
 **Why:** a reviewer should be able to *see* the resilience, not take the README's word for it.
 
-**What Anchorage does:** a row of chips inside the camera's **⚙ settings sheet** switches the
-mock transport's behaviour at runtime. Tap **NO INTERNET**, watch rows move to
-`WAITING FOR CONNECTION` with no attempt spent; tap **SERVER 503**, watch
-`RETRYING... (ATTEMPT 2/5)` with jittered backoff; tap **SERVER 400**, watch it fail once and
-offer a manual retry.
+**What Anchorage does:** two chips inside the camera's **⚙ settings sheet** switch what the
+mock *server* says. Tap **FAILED** and watch `RETRYING... (ATTEMPT 2/5)` climb with jittered
+backoff until the row lands at `FAILED` with a manual retry.
+
+The switcher used to carry **NO INTERNET** and **LOW BANDWIDTH** as well, and dropping them
+made the demonstration stronger rather than weaker. Both are conditions of the *link*, and a
+scripted link proves nothing about an app's resilience — it proves the script works. They are
+now read from the device: connectivity from `ConnectivityMonitor`, and bandwidth **measured**
+from the bytes actually moving and judged by `BandwidthPolicy`. Turn off mobile data and the
+rows park with no attempt spent; turn it back on and they drain. Stand somewhere with one bar
+and the same thing happens for a link that never technically dropped.
 
 It began at the bottom of the Upload Manager and moved when that screen was brought back in
 line with the reference design, whose bottom bar carries one button and nothing else. A
@@ -679,6 +689,113 @@ in the batch deletes nothing"*.
 
 ---
 
+## 30b. Closing the app is a question, not an accident
+
+**Why:** a confirmation on exit is usually friction for its own sake. This one earns it.
+Photographs live in the working batch from the moment the shutter fires until **UPLOAD
+BATCH** hands them to the queue — and only the queue is durable. Closing with an unsent batch
+strands those frames on the device, outside the engine that would have delivered them, and
+nothing tells the user that happened.
+
+It also repairs a defect. The ✕ called `Navigator.maybePop()`, and the camera is the app's
+root route: there was nothing to pop, so the button did nothing at all. No error, no
+animation, no clue — it simply looked disabled.
+
+**What Anchorage does:** the ✕ and the system back gesture both route through one
+confirmation (`PopScope(canPop: false)` intercepts the platform back, so the two cannot
+diverge). The dialog adapts: an empty batch gets `CLOSE` / `CANCEL` and a note that the queue
+keeps syncing in the background; an unsent batch is counted, warned about, and offered
+`UPLOAD & CLOSE`, which enqueues first and closes second — and **declines to close** if the
+enqueue fails. Dismissing the dialog counts as *cancel*, because not answering a question is
+not consent.
+
+`SystemNavigator.pop()`, never `exit(0)`: the platform finishes the activity so Flutter and
+the plugins shut down in order, rather than a kill that can leave a half-written SQLite
+transaction behind.
+
+**Where:** `ExitConfirmationDialog`, `_CameraPreviewPageState._requestExit`.
+**Tests:** 8 in `exit_confirmation_dialog_test.dart`, 6 in `camera_preview_page_test.dart`.
+
+---
+
+## 30c. The zoom band is a decision, and the shutter is actually centred
+
+**Why (the band):** `getMaxZoomLevel` returns whatever the driver claims — 10x, 30x, more.
+Handing that straight to the UI is not neutrality, it is an unmade decision: past roughly 8x
+a phone upscales rather than zooms, and mapping 1x–30x onto the reference's ~230 dp slider
+leaves the 1x–3x band people actually use about twenty pixels tall.
+
+**What Anchorage does:** `ZoomRange.fromSensor` intersects the offered band (0.5x – 8x) with
+what the sensor admits, once, when the camera opens. The ceiling is enforced; the floor is
+the hardware's to grant, because you cannot see wider than the lens. Everything downstream
+reads that one value instead of the raw platform numbers.
+
+**Why (the alignment):** the shutter row used `MainAxisAlignment.spaceBetween`, which reads
+as symmetrical and is not — with a 62 dp thumbnail on one side and a 44 dp flip button on the
+other, the shutter sat 9 dp right of centre. The thumbnail also hung 4 dp low, because its
+box was padded at the top to make room for the count badge.
+
+**What Anchorage does:** matching `Expanded` slots flank the shutter, so its centring is
+exact whatever the neighbours weigh; and the thumbnail's box *is* its visible square, with
+the badge overhanging rather than boxed in. Both are pinned by tests that measure the rects,
+because "looks centred" is exactly the class of thing that drifts back.
+
+**Where:** `domain/entities/zoom_range.dart`, `_ChromeOverlay`, `BatchThumbnail`.
+**Tests:** 13 in `zoom_range_test.dart`, 2 in `camera_preview_page_test.dart`.
+
+---
+
+## 30d. Tap-to-focus that is a control, not a decoration
+
+**Brief:** *"Manual Focus: tap-to-focus functionality with a visual indicator at the tap
+point."*
+
+**Naive implementation:** draw a square where the user tapped, fade it out.
+
+**Why that is not enough:** the indicator answers "did my tap register?" and nothing else.
+Every situation that makes a person tap the viewfinder in the first place — a subject against
+a bright window, a document on a dark desk, a frame they want to keep while they move — needs
+two more things: the ability to *hold* what was just metered, and the ability to say *brighter
+than that*.
+
+**What Anchorage does:** the reticle is modelled on the platform camera apps, because the
+familiarity is the feature. A ring marks the metering point; a padlock on the ring holds
+focus **and** exposure; a sun on a track below sets exposure compensation.
+
+Focus and exposure lock together behind one padlock. The hardware exposes them separately,
+but the situation the control exists for is one situation — *I have framed this, stop
+changing it* — and splitting them would be more faithful to the hardware and less faithful to
+the intent. The adapter locks exposure *first*: locking focus is instant, but locking exposure
+mid-convergence bakes in whatever brightness the sensor happened to be passing through, and
+the visible result is a frame that darkens the moment the padlock closes.
+
+Three rules keep it honest:
+
+1. **A locked reticle does not fade.** An invisible lock is the failure mode here: the user
+   forgets they set it and every photograph afterwards is metered for a subject they walked
+   away from.
+2. **A tap elsewhere releases it** and returns the brightness to neutral — both belonged to
+   the old point.
+3. **Nothing survives invisibly.** The reticle fading returns the exposure to 0 EV; releasing
+   the sensor drops the lock, because a new controller starts at auto.
+
+The dwell went from 1.2 s to **4 s**, because the reticle is now something the user *operates*
+and a control that disappears while you are reaching for it is not a control. Dragging the
+brightness re-arms the timer, so it cannot vanish under a finger.
+
+Exposure compensation is **snapped to the sensor's own EV grid** before anything reads it.
+Android reports the range in steps (commonly ±2 EV in thirds) and rejects or silently rounds
+anything off it, which would leave the sun sitting at a number the hardware is not using. The
+grid is anchored at 0, not at `min`, because neutral is the one value the user must be able to
+return to exactly.
+
+**Where:** `domain/entities/exposure_range.dart`, `CameraPort.setMeteringLocked` /
+`setExposureOffset`, `FocusReticle`.
+**Tests:** 13 in `exposure_range_test.dart`, 12 in `camera_bloc_test.dart` (the lock and
+brightness groups), 6 in `camera_chrome_test.dart`.
+
+---
+
 ## 31. Serial uploads, and a re-check between files
 
 **Why:** parallel uploads on a weak link starve each other and blow up memory on large files.
@@ -728,6 +845,48 @@ costs one extra sweep of waiting.
 **Tests:** *"a row another sweep won in the meantime is skipped, not sent twice"*, *"a task
 abandoned mid-transfer is re-queued, not stranded"*, *"a transfer that is still moving is left
 alone by the reaper"*.
+
+---
+
+## 32a. Four reasons to sweep, not one
+
+**Why:** "automatically retry once a stable connection is detected without user intervention"
+is satisfied, on paper, by reacting to the link becoming stable. The app did exactly that,
+and still had two situations where the engine sat there looking dead while the user watched:
+
+* **New work on an already-stable link.** Tap `UPLOAD BATCH` with good Wi-Fi and nothing
+  happened. The batch went to SQLite, WorkManager was asked for a wake-up — and the rows read
+  `IN QUEUE` until the OS got round to it, which is minutes.
+* **An elapsed backoff.** A retryable failure schedules a four-second backoff. Nothing in the
+  foreground was watching the clock, so the row read `RETRYING...` and then did nothing at
+  all until the 15-minute periodic sweep.
+
+In both cases the queue was intact and the work did eventually go — the engine was *correct*.
+It just looked broken, which for a resilience feature is nearly as bad.
+
+**What Anchorage does:** a sweep now starts on five occasions — launch, the link becoming
+stable, new work being queued, a backoff coming due (a `Timer` armed at the earliest
+`nextAttemptAt` in the queue), and a heartbeat while work sits parked on a link that claims
+to be usable. WorkManager remains the safety net for when the app is not running at all.
+
+The last one closes a gap the first four left. "The link became stable" is a *transition*,
+and there are ordinary situations that never produce one: a weak signal that reports itself
+connected throughout while transfers keep collapsing, or a transport that died for a reason
+the radio knows nothing about. In both the row parked correctly and then waited for an event
+that had already happened. Parked work still spends no attempt — the heartbeat only makes
+sure something eventually asks again, which is the difference between *waiting for a
+connection* and *stuck*.
+
+**The fix underneath:** `claim` and `requeueStalled` used to republish the queue
+unconditionally, and the stale-claim reaper runs at the top of *every* sweep. "Sweep when the
+queue changes" plus "always announce a change" is an infinite loop, so both now notify only
+when they actually change a row — which is the correct behaviour regardless.
+
+**Where:** `UploadManagerBloc._onQueueUpdated`, `_hasWorkReadyNow`, `_scheduleBackoffWake`.
+**Tests:** *"work queued while the app is open is swept immediately"*, *"a retry is
+re-attempted when its backoff elapses"*, plus two that pin the loop guards — *"an offline
+link does not start a sweep that would only park"* and *"paused rows are not swept behind the
+user's back"*.
 
 ---
 

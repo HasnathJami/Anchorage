@@ -8,32 +8,41 @@ import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 
-/// What the mock server should do on the next attempt.
+/// What the mock **server** should do on the next attempt.
 ///
-/// Exposed as a knob rather than hard-wired so the behaviour the brief asks
-/// for - success *and* failure responses - can be demonstrated live from the
-/// app's debug menu, and asserted deterministically from tests.
+/// Two outcomes, and only two, because a server has only two things to say
+/// about an upload: it took it, or it did not. The network conditions the
+/// brief also asks about — no internet, and a link too slow to use — are
+/// deliberately *not* in this list. They are not the server's answer, and
+/// scripting them demonstrated nothing except that a switch works:
+///
+///  * **No internet** comes from `ConnectivityMonitor`, and the queue is
+///    drained again by WorkManager's network-constrained wake-up.
+///  * **Low bandwidth** is measured from the bytes actually moving and judged
+///    by `BandwidthPolicy`.
+///
+/// Both are therefore real on a real device: turn off mobile data, or stand
+/// somewhere with one bar, and the engine responds to the link it genuinely
+/// has. This switch only decides what the far end says once bytes arrive.
 enum MockUploadBehaviour {
-  /// Transfer completes normally.
+  /// The server accepts the upload. Whether it *completes* still depends on
+  /// the link, which is the point.
   succeed,
 
-  /// Fails part-way with [LowBandwidthFailure] - the "weak signal" case.
-  failLowBandwidth,
-
-  /// Fails immediately with [NoConnectionFailure] - the "no internet" case.
-  failNoConnection,
-
-  /// Fails with a retryable 503.
-  failServerRetryable,
-
-  /// Fails with a non-retryable 400; must never be retried.
-  failServerPermanent,
+  /// The server rejects the upload, however good the link is.
+  ///
+  /// Rendered as a retryable 500, so one tap shows the whole of the engine's
+  /// server-failure policy: jittered backoff, an attempt counter that climbs,
+  /// and a row that ends at `FAILED` with a Retry button once the attempts run
+  /// out — rather than a queue that quietly spins forever.
+  fail,
 
   /// Never answers; the caller's timeout must fire.
+  ///
+  /// Not offered in the app's demonstration panel: it is indistinguishable
+  /// from a hung app until the timeout fires, which is a poor thing to show a
+  /// reviewer. Kept because it is a real transport behaviour worth testing.
   hang,
-
-  /// Succeeds or fails at random - useful for soak-testing the engine.
-  flaky,
 }
 
 /// The stand-in for a real upload endpoint.
@@ -55,14 +64,19 @@ class MockUploadApi implements UploaderPort {
     int throughputBytesPerSecond = 2 * 1024 * 1024,
     Duration tick = const Duration(milliseconds: 120),
     double failAtFraction = 0.45,
-    Random? random,
     bool simulateTime = true,
   })  : _connectivity = connectivity,
         _throughput = throughputBytesPerSecond,
         _tick = tick,
         _failAtFraction = failAtFraction,
-        _random = random ?? Random(),
         _simulateTime = simulateTime;
+
+  /// What [MockUploadBehaviour.fail] returns.
+  ///
+  /// Retryable, so the engine's backoff and attempt ceiling are what end the
+  /// task rather than a special case here. `RetryPolicy` already decides when
+  /// enough is enough, and it should stay the only thing that does.
+  static const int rejectionStatusCode = 500;
 
   /// Switchable at runtime from the in-app demo panel so a reviewer can see
   /// each response path without a rebuild. Nothing in the engine reads it.
@@ -71,7 +85,6 @@ class MockUploadApi implements UploaderPort {
   final int _throughput;
   final Duration _tick;
   final double _failAtFraction;
-  final Random _random;
 
   /// When false the mock returns instantly - used by tests that assert engine
   /// behaviour rather than transfer pacing.
@@ -101,11 +114,8 @@ class MockUploadApi implements UploaderPort {
       return const Result<void>.failure(NoConnectionFailure());
     }
 
-    final MockUploadBehaviour behaviour = _resolveBehaviour();
+    final MockUploadBehaviour behaviour = this.behaviour;
 
-    if (behaviour == MockUploadBehaviour.failNoConnection) {
-      return const Result<void>.failure(NoConnectionFailure());
-    }
     if (behaviour == MockUploadBehaviour.hang) {
       await Future<void>.delayed(const Duration(minutes: 5));
       return const Result<void>.failure(TimeoutFailure());
@@ -116,6 +126,11 @@ class MockUploadApi implements UploaderPort {
     final int failAtBytes = (task.sizeBytes * _failAtFraction).round();
 
     int sent = 0;
+    // Throughput is *measured*, not declared. It is the number the bandwidth
+    // watchdog acts on, so reporting the configured rate back would make that
+    // check a tautology - and would hide a pipe that had genuinely stalled.
+    final Stopwatch elapsed = Stopwatch()..start();
+
     while (sent < task.sizeBytes) {
       if (_cancelled.contains(task.id)) {
         return const Result<void>.failure(TimeoutFailure());
@@ -129,39 +144,36 @@ class MockUploadApi implements UploaderPort {
         UploadProgress(
           bytesTransferred: sent,
           totalBytes: task.sizeBytes,
-          throughputBytesPerSecond: _throughput,
+          throughputBytesPerSecond: _observedThroughput(sent, elapsed),
         ),
       );
 
-      // Mid-transfer failures happen part-way through, not at byte zero -
-      // that is the case that exercises resuming a partially sent file.
-      if (behaviour == MockUploadBehaviour.failLowBandwidth && sent >= failAtBytes) {
-        return Result<void>.failure(
-          LowBandwidthFailure(observedBytesPerSecond: _throughput ~/ 20),
+      // A rejection arrives part-way through, not at byte zero - that is the
+      // case that exercises a partially sent file being started again.
+      if (behaviour == MockUploadBehaviour.fail && sent >= failAtBytes) {
+        return const Result<void>.failure(
+          ServerFailure(rejectionStatusCode, isRetryable: true),
         );
-      }
-      if (behaviour == MockUploadBehaviour.failServerRetryable && sent >= failAtBytes) {
-        return const Result<void>.failure(ServerFailure(503));
-      }
-      if (behaviour == MockUploadBehaviour.failServerPermanent && sent >= failAtBytes) {
-        return const Result<void>.failure(ServerFailure(400, isRetryable: false));
       }
     }
 
     return const Result<void>.success(null);
   }
 
+  /// Bytes per second, from the clock rather than from the setting.
+  ///
+  /// Guarded against a zero elapsed time: with [_simulateTime] off the whole
+  /// transfer happens inside one microtask, and dividing by nothing would make
+  /// every test look like an infinitely fast link. Reporting the configured
+  /// rate in that case is the honest answer - no time has passed, so no
+  /// slowness has been observed.
+  int _observedThroughput(int sent, Stopwatch elapsed) {
+    final int millis = elapsed.elapsedMilliseconds;
+    if (millis <= 0) return _throughput;
+    return (sent * 1000 / millis).round();
+  }
+
   @override
   Future<void> cancel(String taskId) async => _cancelled.add(taskId);
 
-  MockUploadBehaviour _resolveBehaviour() {
-    if (behaviour != MockUploadBehaviour.flaky) return behaviour;
-
-    // 60 % success, then a spread of the retryable failures.
-    final double roll = _random.nextDouble();
-    if (roll < 0.60) return MockUploadBehaviour.succeed;
-    if (roll < 0.80) return MockUploadBehaviour.failLowBandwidth;
-    if (roll < 0.92) return MockUploadBehaviour.failServerRetryable;
-    return MockUploadBehaviour.failNoConnection;
-  }
 }

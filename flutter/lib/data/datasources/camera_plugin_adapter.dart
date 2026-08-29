@@ -5,6 +5,8 @@ import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_range.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:camera/camera.dart';
 import 'package:path/path.dart' as p;
@@ -32,15 +34,19 @@ class CameraPluginAdapter implements CameraPort {
   CameraLens? _activeLens;
   int _previewKey = 0;
 
-  /// The open controller's zoom range, read once when it is opened.
+  /// The open controller's offered zoom range, computed once when it opens.
   ///
-  /// These are fixed properties of a sensor, but they used to be fetched over
-  /// the platform channel on *every* [setZoom] call — and a pinch fires dozens
-  /// of those a second, so a single gesture cost hundreds of round-trips to
-  /// re-learn two numbers that cannot change. Caching them is the cheapest
+  /// The bounds are fixed properties of a sensor, but they used to be fetched
+  /// over the platform channel on *every* [setZoom] call — and a pinch fires
+  /// dozens of those a second, so a single gesture cost hundreds of round-trips
+  /// to re-learn two numbers that cannot change. Caching them is the cheapest
   /// battery win on this screen.
-  double _minZoom = 1;
-  double _maxZoom = 1;
+  ZoomRange _range = ZoomRange.fixed;
+
+  /// The open controller's exposure-compensation range, cached for the same
+  /// reason as [_range]: a brightness drag would otherwise re-ask the platform
+  /// for three unchanging numbers on every frame.
+  ExposureRange _exposure = ExposureRange.fixed;
 
   /// The live controller, for the widget that hosts the platform preview.
   /// Nullable by design: there is no controller before initialise and none
@@ -95,19 +101,26 @@ class CameraPluginAdapter implements CameraPort {
 
       await controller.initialize();
 
-      final double minZoom = await controller.getMinZoomLevel();
-      final double maxZoom = await controller.getMaxZoomLevel();
+      // The offered band, not the raw sensor one: 0.5x - 8x intersected with
+      // what this camera can actually do. Everything downstream - the slider's
+      // end labels, the quick-zoom stops, the clamp in [setZoom] - reads this,
+      // so there is exactly one place the range is decided.
+      final ZoomRange range = ZoomRange.fromSensor(
+        sensorMin: await controller.getMinZoomLevel(),
+        sensorMax: await controller.getMaxZoomLevel(),
+      );
 
-      // Open at 1x, not at the sensor's minimum. On a phone whose logical rear
-      // camera spans an ultra-wide the minimum is 0.5, and starting there means
-      // the preview opens on a distorted wide-angle frame the user did not ask
-      // for while the zoom row lights "0.5". 1x is the frame everyone expects a
-      // camera to open on, so it is set on the hardware here rather than merely
-      // reported.
-      final double openingZoom = 1.0.clamp(minZoom, maxZoom).toDouble();
-      if (openingZoom != minZoom) {
-        // Best-effort: a sensor that refuses the write still previews fine, it
-        // simply stays where the plugin left it.
+      final ExposureRange exposure = ExposureRange.fromSensor(
+        min: await controller.getMinExposureOffset(),
+        max: await controller.getMaxExposureOffset(),
+        step: await controller.getExposureOffsetStepSize(),
+      );
+
+      final double openingZoom = range.openingZoom;
+      if (openingZoom != range.min) {
+        // Set on the hardware, not merely reported. Best-effort: a sensor that
+        // refuses the write still previews fine, it simply stays where the
+        // plugin left it.
         try {
           await controller.setZoomLevel(openingZoom);
         } on CameraException {
@@ -117,8 +130,8 @@ class CameraPluginAdapter implements CameraPort {
 
       _controller = controller;
       _activeLens = lens;
-      _minZoom = minZoom;
-      _maxZoom = maxZoom;
+      _range = range;
+      _exposure = exposure;
       _previewKey++;
 
       return Result<CameraSession>.success(
@@ -126,10 +139,11 @@ class CameraPluginAdapter implements CameraPort {
           previewAspectRatio: controller.value.aspectRatio,
           settings: CameraSettings(
             zoom: openingZoom,
-            minZoom: minZoom,
-            maxZoom: maxZoom,
+            minZoom: range.min,
+            maxZoom: range.max,
             isFrontFacing: description.lensDirection == CameraLensDirection.front,
           ),
+          exposureRange: exposure,
           availableLenses: _lenses,
           activeLens: lens,
           previewKey: _previewKey,
@@ -150,9 +164,9 @@ class CameraPluginAdapter implements CameraPort {
     return guard<void>(
       // Clamping here, not in the Bloc: the platform throws on an
       // out-of-range value, and a pinch gesture will absolutely produce one.
-      // The bounds come from the cache filled when this controller was opened,
+      // The bounds come from the range cached when this controller was opened,
       // not from two fresh channel calls per frame.
-      () => controller.setZoomLevel(zoom.clamp(_minZoom, _maxZoom)),
+      () => controller.setZoomLevel(_range.clampZoom(zoom)),
       onError: (Object error, StackTrace stackTrace) =>
           CameraOperationFailure('setZoom', cause: error),
     );
@@ -197,6 +211,47 @@ class CameraPluginAdapter implements CameraPort {
       },
       onError: (Object error, StackTrace stackTrace) =>
           CameraOperationFailure('focusAt', cause: error),
+    );
+  }
+
+  @override
+  Future<Result<void>> setMeteringLocked(bool locked) async {
+    final CameraController? controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Result<void>.failure(CameraInterruptedFailure());
+    }
+
+    return guard<void>(
+      () async {
+        // Exposure first. Locking focus is instant, but locking exposure while
+        // the sensor is still converging bakes in whatever brightness it
+        // happened to be passing through - and the visible result is a frame
+        // that darkens the moment the padlock closes.
+        await controller.setExposureMode(
+          locked ? ExposureMode.locked : ExposureMode.auto,
+        );
+        await controller.setFocusMode(
+          locked ? FocusMode.locked : FocusMode.auto,
+        );
+      },
+      onError: (Object error, StackTrace stackTrace) =>
+          CameraOperationFailure('setMeteringLocked', cause: error),
+    );
+  }
+
+  @override
+  Future<Result<void>> setExposureOffset(double ev) async {
+    final CameraController? controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Result<void>.failure(CameraInterruptedFailure());
+    }
+
+    return guard<void>(
+      // Normalised against the cached range: Android rejects a value off its
+      // own step grid, and a drag produces one on almost every frame.
+      () => controller.setExposureOffset(_exposure.normalise(ev)),
+      onError: (Object error, StackTrace stackTrace) =>
+          CameraOperationFailure('setExposureOffset', cause: error),
     );
   }
 

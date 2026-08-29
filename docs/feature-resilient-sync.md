@@ -89,6 +89,40 @@ late costs one extra sweep of waiting.
 
 ---
 
+## 1a. What starts a sweep
+
+The rules above describe what a sweep *does*. When one begins is a separate question, and
+getting it wrong produces an engine that is correct on paper and looks dead on screen.
+
+| Trigger | Owner | Why it is needed |
+| --- | --- | --- |
+| App launch | `UploadManagerBloc._onStarted` | Drains a queue left behind by a previous run |
+| The link becomes **stable** | `UploadManagerBloc._onLinkChanged` | The brief's requirement in one line: retry automatically, no user action |
+| **New work is queued** | `UploadManagerBloc._onQueueUpdated` | Without it, tapping `UPLOAD BATCH` on an already-stable link uploaded nothing until WorkManager next woke — the rows sat at `IN QUEUE` for minutes |
+| **A backoff elapses** | `UploadManagerBloc._scheduleBackoffWake` | A retry scheduled four seconds out had no foreground trigger, so the row read `RETRYING...` and then did nothing until the 15-minute periodic sweep |
+| OS wake-up, app closed | `WorkManagerScheduler` | The whole app-not-running case |
+
+Only the first two existed at first. The last two are the difference between an engine that
+*is* resilient and one that *looks* it.
+
+Both new triggers needed a fix underneath them. `claim` and `requeueStalled` used to
+republish the queue unconditionally, and the reaper runs at the top of *every* sweep — so
+"sweep when the queue changes" plus "always announce a change" is an infinite loop. They now
+notify only when they actually change a row, which is the correct behaviour anyway.
+
+`_hasWorkReadyNow` is the guard on the queue-update trigger, and every clause in it is
+load-bearing:
+
+* **not paused** — the user said stop.
+* **not already sweeping** — `droppable()` would drop the event anyway; this keeps the
+  intent explicit.
+* **the link can transfer** — otherwise parking a task for want of a network republishes the
+  queue, which starts a sweep, which parks it again.
+* **something is ready *now*** — a task sitting out its backoff must not be swept
+  continuously until the backoff elapses, which is the opposite of what backoff is for.
+
+---
+
 ## 2. The task state machine
 
 ```
@@ -300,7 +334,7 @@ typed failure taxonomy:
 | `succeed` | Full transfer | `synced` |
 | `failLowBandwidth` | `LowBandwidthFailure` at 45 % | **parked**, no attempt spent |
 | `failNoConnection` | `NoConnectionFailure` | **parked**, no attempt spent |
-| `failServerRetryable` | `ServerFailure(503)` | `retrying`, attempt +1, jittered backoff |
+| `fail` | `ServerFailure(500)` | `retrying`, attempt +1, jittered backoff |
 | `failServerPermanent` | `ServerFailure(400)` | `failed` on the **first** attempt |
 | `hang` | Never answers | caller's timeout |
 | `flaky` | Weighted random mix | soak test |
@@ -327,8 +361,50 @@ Switching is one line in `injector.dart`.
 
 ### The in-app switcher
 
-A row of chips inside the camera's settings sheet changes the mock's behaviour at runtime,
-so every path is demonstrable on a real device in seconds. Nothing in the engine reads it.
+**Two** chips inside the camera's settings sheet change the mock's behaviour at runtime:
+`SUCCESS` and `FAILED`. Nothing in the engine reads the setting.
+
+Two, and not more, because a server has two things to say about an upload — it took the
+file, or it did not. The switcher used to carry `LOW BANDWIDTH` and `NO INTERNET` as well,
+and those were removed on purpose: **they are conditions of the link, not answers from a
+server**, the app now reads both from the device itself, and a scripted copy of them
+demonstrated nothing except that a switch works.
+
+| Chip | What happens |
+| --- | --- |
+| `SUCCESS` | The far end accepts the file. Whether the upload *completes* still depends on the link — an offline device still fails, and a link too slow to carry the file still parks. |
+| `FAILED` | The far end rejects it, part-way through, however good the link is. A retryable `500`, so `RetryPolicy` decides when enough is enough: the attempt counter climbs with jittered backoff and the row ends at `FAILED` with a manual **Retry**. |
+
+The rejection is deliberately retryable rather than a permanent `4xx`. A mock that decided
+"this one is final" would be duplicating a judgement `RetryPolicy` already owns, and there
+should be exactly one thing in this codebase that decides when to stop trying.
+
+### Where "no internet" and "low bandwidth" come from instead
+
+Both are read from reality, which is the only way either is worth demonstrating:
+
+| Condition | Source | What the engine does |
+| --- | --- | --- |
+| No internet | `ConnectivityMonitor` over `connectivity_plus`, plus WorkManager's network constraint for the app-closed case | Rule 1: park every eligible task in `waitingForConnection`, spend no attempt, ask for a network-constrained wake-up |
+| Low bandwidth | **Measured** throughput from the bytes actually moving, judged by `BandwidthPolicy` | Cancel the transfer, park the task, spend no attempt |
+
+The second one exists because the operating system will tell you there is a transport and
+will never tell you it is useless. A phone on one bar, or on a hotel Wi-Fi behind a saturated
+uplink, is `connected` by every signal Android exposes while a 300 KB photograph takes four
+minutes and usually dies before it lands. So `ProcessUploadQueue` watches the throughput its
+own progress callback reports, and if it stays under `BandwidthPolicy.floorBytesPerSecond`
+for the whole of `BandwidthPolicy.grace`, it cancels the transfer and parks the row.
+
+Three details are load-bearing:
+
+* **The grace window measures a *continuous* slow spell.** One good tick clears it. TCP
+  slow-start, a lift, and a Wi-Fi roam all produce a second or two of nothing on a link that
+  is about to be fine, and parking those would abandon transfers that were going to work.
+* **It parks rather than failing.** The file is fine and the server is fine; the network is
+  not. Spending a retry attempt on that burns the budget the task needs later.
+* **The watchdog lives in the use case, not the transport.** It is a product decision about
+  what "too slow" means, so it applies to `MockUploadApi` and to a real HTTP client alike,
+  and it is asserted on the JVM rather than discovered on a train.
 
 It lives there rather than on the Upload Manager because the reference design's bottom bar
 carries one button and nothing else. The switcher is the one place the presentation layer

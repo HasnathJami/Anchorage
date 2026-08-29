@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:anchorage_harbor/core/utils/formatters.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:flutter/material.dart';
 
@@ -108,6 +110,7 @@ class VerticalZoomSlider extends StatelessWidget {
     required this.minZoom,
     required this.maxZoom,
     required this.onZoomChanged,
+    this.onZoomSettled,
     this.height = 230,
     super.key,
   });
@@ -116,6 +119,13 @@ class VerticalZoomSlider extends StatelessWidget {
   final double minZoom;
   final double maxZoom;
   final ValueChanged<double> onZoomChanged;
+
+  /// The finger left the track.
+  ///
+  /// Separate from [onZoomChanged] because a zoom that needs another camera
+  /// must not open it mid-drag - see `CameraZoomGestureEnded`.
+  final VoidCallback? onZoomSettled;
+
   final double height;
 
   static const double _trackWidth = 30;
@@ -141,7 +151,12 @@ class VerticalZoomSlider extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (DragUpdateDetails details) =>
             _handleDrag(details.localPosition.dy),
+        // Same rule as the pinch: the camera a value needs is opened when the
+        // finger stops, not on every frame of the drag.
+        onVerticalDragEnd: (_) => onZoomSettled?.call(),
+        onVerticalDragCancel: () => onZoomSettled?.call(),
         onTapDown: (TapDownDetails details) => _handleDrag(details.localPosition.dy),
+        onTapUp: (_) => onZoomSettled?.call(),
         child: Padding(
           // Transparent margin that is still part of the hit target.
           padding: const EdgeInsets.symmetric(horizontal: _touchPadding),
@@ -396,6 +411,10 @@ class BatchThumbnail extends StatelessWidget {
   final String? latestPath;
   final VoidCallback onTap;
 
+  /// The side of the visible square. It is also the widget's whole footprint,
+  /// which is what keeps it on the shutter's centre line — see below.
+  static const double _side = 54;
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
@@ -405,16 +424,20 @@ class BatchThumbnail extends StatelessWidget {
           : 'Review $count photograph${count == 1 ? '' : 's'} in this batch',
       child: GestureDetector(
         onTap: onTap,
+        // The box is exactly the square, and the badge *overhangs* it rather
+        // than being boxed in with it. The earlier version padded the top of a
+        // taller box to leave room for the badge, which shifted the square's
+        // optical centre down and left it sitting below the shutter and the
+        // lens-flip button it is meant to line up with.
         child: SizedBox(
-          width: 62,
-          height: 62,
+          width: _side,
+          height: _side,
           child: Stack(
             clipBehavior: Clip.none,
             children: <Widget>[
               Container(
-                width: 54,
-                height: 54,
-                margin: const EdgeInsets.only(top: 8),
+                width: _side,
+                height: _side,
                 decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(12),
@@ -438,8 +461,8 @@ class BatchThumbnail extends StatelessWidget {
               ),
               if (count > 0)
                 Positioned(
-                  right: 0,
-                  top: 0,
+                  right: -6,
+                  top: -8,
                   child: Container(
                     constraints: const BoxConstraints(minWidth: 20),
                     padding:
@@ -468,46 +491,311 @@ class BatchThumbnail extends StatelessWidget {
   }
 }
 
-/// The tap-to-focus reticle.
+/// The tap-to-focus reticle: a ring, a padlock, and a brightness slider.
 ///
-/// A square that snaps in and settles, mirroring the platform camera apps the
-/// user already knows - the familiarity is the point.
+/// Modelled on the platform camera apps the user already knows, because the
+/// familiarity *is* the feature — nobody reads a manual for a viewfinder. Three
+/// parts, each earning its place:
+///
+///  * **The ring** marks where the sensor is metering. Decorative and
+///    non-interactive, so a tap that lands inside it re-meters there rather
+///    than being swallowed.
+///  * **The padlock**, sitting on the ring at twelve o'clock, holds focus and
+///    exposure where they are. Open by default, closed while locked, and the
+///    reticle stops fading while it is closed — a lock the user cannot see is
+///    a lock they will forget they set.
+///  * **The brightness slider** beneath, a sun on a track, sets exposure
+///    compensation for this metering point.
+///
+/// The whole thing is positioned so the **ring** is centred on the tap, not
+/// the widget: the padlock overhangs the top and the slider hangs below, and
+/// centring the bounding box would put the reticle visibly above the finger.
 class FocusReticle extends StatelessWidget {
-  const FocusReticle({required this.position, super.key});
+  const FocusReticle({
+    required this.position,
+    required this.bounds,
+    required this.isLocked,
+    required this.exposure,
+    required this.exposureOffset,
+    required this.onLockToggled,
+    required this.onExposureChanged,
+    super.key,
+  });
 
+  /// Where the user tapped, in preview pixels.
   final Offset position;
+
+  /// The preview's size, used to keep the reticle on screen near an edge.
+  final Size bounds;
+
+  final bool isLocked;
+  final ExposureRange exposure;
+  final double exposureOffset;
+  final VoidCallback onLockToggled;
+  final ValueChanged<double> onExposureChanged;
+
+  static const double _ring = 68;
+
+  /// The padlock glyph itself.
+  static const double _lockGlyph = 18;
+
+  /// Its touch target. A glyph this small is well under the 48 dp guidance, so
+  /// the *hit* box is padded out around it while the drawing stays small
+  /// enough to sit in the ring without hiding the subject.
+  static const double _lockHit = 44;
+
+  /// Headroom above the ring, so the padlock's hit box is centred on the
+  /// ring's twelve o'clock rather than hanging below it.
+  static const double _lockHeadroom = _lockHit / 2;
+
+  static const double _trackWidth = 108;
+  static const double _trackHeight = 34;
+  static const double _gap = 8;
+
+  /// How much of the ring is left unpainted for the padlock to sit in.
+  ///
+  /// Every platform camera app cuts the ring rather than drawing the lock on
+  /// top of the line, and the reason is legibility: a stroke running through
+  /// the middle of a padlock reads as a broken circle with something stuck to
+  /// it, not as a badge on a ring.
+  ///
+  /// Derived from the glyph rather than typed in, so the gap stays exactly as
+  /// wide as it needs to be if either size changes. Half the gap is the angle
+  /// subtended by half the glyph plus a little clearance either side.
+  static const double _gapClearance = 3;
+
+  static double get lockGapSweep => 2 *
+      math.asin(((_lockGlyph / 2) + _gapClearance) / (_ring / 2));
+
+  double get _width => _trackWidth;
+  double get _height => _lockHeadroom + _ring + _gap + _trackHeight;
+
+  /// Distance from the widget's top edge down to the ring's centre.
+  double get _ringCentreFromTop => _lockHeadroom + (_ring / 2);
 
   @override
   Widget build(BuildContext context) {
+    final bool canAdjust = exposure.canAdjust;
+    final double height = canAdjust ? _height : _lockHeadroom + _ring;
+
+    // Clamped so a tap in a corner does not put the controls half off-screen,
+    // where the slider cannot be dragged and the padlock cannot be hit.
+    final double left =
+        (position.dx - _width / 2).clamp(4.0, (bounds.width - _width - 4).clamp(4.0, double.infinity));
+    final double top = (position.dy - _ringCentreFromTop)
+        .clamp(4.0, (bounds.height - height - 4).clamp(4.0, double.infinity));
+
     return Positioned(
-      left: position.dx - 36,
-      top: position.dy - 36,
-      child: IgnorePointer(
-        child: TweenAnimationBuilder<double>(
-          key: ValueKey<Offset>(position),
-          tween: Tween<double>(begin: 1.35, end: 1),
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutBack,
-          builder: (BuildContext context, double scale, Widget? child) =>
-              Transform.scale(scale: scale, child: child),
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFFFD24A), width: 1.6),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Center(
-              child: Container(
-                width: 6,
-                height: 6,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFFD24A),
-                  shape: BoxShape.circle,
-                ),
+      left: left,
+      top: top,
+      width: _width,
+      height: height,
+      child: TweenAnimationBuilder<double>(
+        // Keyed on the point so a *new* tap replays the snap; adjusting the
+        // brightness of an existing one must not.
+        key: ValueKey<Offset>(position),
+        tween: Tween<double>(begin: 1.25, end: 1),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutBack,
+        builder: (BuildContext context, double scale, Widget? child) =>
+            Transform.scale(scale: scale, child: child),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SizedBox(
+              // The width is as load-bearing as the height. A [Stack] takes
+              // its size from its *non-positioned* children, and the only one
+              // here is the padlock - so without this the stack was 44 dp
+              // wide, the positioned 68 dp ring was constrained and clipped to
+              // that, and the reticle rendered as two disconnected arcs with
+              // no left or right side.
+              width: _ring,
+              height: _lockHeadroom + _ring,
+              child: Stack(
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.none,
+                children: <Widget>[
+                  Positioned(
+                    top: _lockHeadroom,
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        size: const Size(_ring, _ring),
+                        painter: const _MeteringRingPainter(),
+                      ),
+                    ),
+                  ),
+                  _LockBadge(isLocked: isLocked, onPressed: onLockToggled),
+                ],
               ),
             ),
+            if (canAdjust) ...<Widget>[
+              const SizedBox(height: _gap),
+              _BrightnessSlider(
+                exposure: exposure,
+                offset: exposureOffset,
+                onChanged: onExposureChanged,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The ring, drawn with a gap at twelve o'clock for the padlock.
+///
+/// A [CustomPaint] rather than a circular [BoxDecoration] because a decoration
+/// can only draw a whole border, and the whole point is the piece that is
+/// missing.
+class _MeteringRingPainter extends CustomPainter {
+  const _MeteringRingPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint stroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      // Rounded, so the two cut ends read as a deliberate gap rather than as a
+      // line that ran out.
+      ..strokeCap = StrokeCap.round;
+
+    final double gap = FocusReticle.lockGapSweep;
+
+    // Angles are measured from three o'clock, so twelve o'clock is -pi/2.
+    // Start half a gap past it and sweep the rest of the way round.
+    canvas.drawArc(
+      Offset.zero & size,
+      -math.pi / 2 + (gap / 2),
+      (2 * math.pi) - gap,
+      false,
+      stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MeteringRingPainter oldDelegate) => false;
+}
+
+/// The padlock that holds focus and exposure.
+class _LockBadge extends StatelessWidget {
+  const _LockBadge({required this.isLocked, required this.onPressed});
+
+  final bool isLocked;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      toggled: isLocked,
+      label: isLocked
+          ? 'Focus and exposure locked. Tap to unlock.'
+          : 'Lock focus and exposure',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onPressed,
+        child: SizedBox(
+          // Square, so the glyph's centre lands exactly on the ring's twelve
+          // o'clock - which is where the gap in the ring is cut for it.
+          width: FocusReticle._lockHit,
+          height: FocusReticle._lockHit,
+          child: Center(
+            child: Icon(
+              isLocked ? Icons.lock : Icons.lock_open,
+              size: FocusReticle._lockGlyph,
+              color: Colors.white,
+              shadows: const <Shadow>[
+                Shadow(color: Color(0xCC000000), blurRadius: 4),
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The sun on a track under the reticle.
+class _BrightnessSlider extends StatelessWidget {
+  const _BrightnessSlider({
+    required this.exposure,
+    required this.offset,
+    required this.onChanged,
+  });
+
+  final ExposureRange exposure;
+  final double offset;
+  final ValueChanged<double> onChanged;
+
+  static const double _sun = 22;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      slider: true,
+      label: 'Brightness',
+      value: Formatters.exposure(offset),
+      child: SizedBox(
+        width: FocusReticle._trackWidth,
+        height: FocusReticle._trackHeight,
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double travel = constraints.maxWidth - _sun;
+
+            void report(double dx) {
+              if (travel <= 0) return;
+              onChanged(exposure.evAt(((dx - _sun / 2) / travel).clamp(0.0, 1.0)));
+            }
+
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: (DragUpdateDetails details) =>
+                  report(details.localPosition.dx),
+              onTapDown: (TapDownDetails details) =>
+                  report(details.localPosition.dx),
+              child: Stack(
+                alignment: Alignment.centerLeft,
+                children: <Widget>[
+                  // The track is drawn full width and the sun rides over it,
+                  // exactly as in the platform apps: a line that stops at the
+                  // knob reads as a progress bar, which this is not.
+                  Center(
+                    child: Container(
+                      height: 1.4,
+                      color: Colors.white.withValues(alpha: 0.85),
+                    ),
+                  ),
+                  Positioned(
+                    left: (travel * exposure.fractionOf(offset))
+                        .clamp(0.0, travel <= 0 ? 0.0 : travel),
+                    child: _SunKnob(),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _SunKnob extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _BrightnessSlider._sun,
+      height: _BrightnessSlider._sun,
+      child: Center(
+        child: Icon(
+          Icons.brightness_7,
+          size: 18,
+          color: Colors.white,
+          shadows: const <Shadow>[
+            Shadow(color: Color(0xCC000000), blurRadius: 4),
+          ],
         ),
       ),
     );

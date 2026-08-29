@@ -1,6 +1,9 @@
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_range.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_span.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:equatable/equatable.dart';
@@ -87,6 +90,9 @@ class CameraState extends Equatable {
     this.session,
     this.batch,
     this.focusPoint,
+    this.isMeteringLocked = false,
+    this.isSwitchingLens = false,
+    this.exposureOffset = 0,
     this.flashMode = CaptureFlashMode.off,
     this.showsGrid = false,
     this.isCapturing = false,
@@ -103,8 +109,28 @@ class CameraState extends Equatable {
 
   final CaptureBatch? batch;
 
-  /// The reticle position, cleared after a short dwell.
+  /// The reticle position, cleared after a short dwell - unless the metering
+  /// is locked, in which case it stays until the user unlocks it.
   final FocusPoint? focusPoint;
+
+  /// Focus and exposure are held where the user put them.
+  ///
+  /// Belongs beside [focusPoint] rather than on the session: a lock is about a
+  /// point on a frame, and both die when the sensor is released.
+  final bool isMeteringLocked;
+
+  /// A rear camera is being handed over to another one.
+  ///
+  /// Distinct from a cold start even though both leave the app briefly without
+  /// a sensor, because they deserve different screens. A cold start has earned
+  /// a spinner; a hand-over between two rear cameras is a few hundred
+  /// milliseconds in the middle of a gesture, and covering the chrome with a
+  /// full-screen loading state for it is the "screen loads" flicker that
+  /// pinching past 1x used to produce.
+  final bool isSwitchingLens;
+
+  /// Exposure compensation in EV, as set by the brightness slider.
+  final double exposureOffset;
 
   /// The flash mode the *user* has chosen.
   ///
@@ -143,13 +169,49 @@ class CameraState extends Equatable {
       session?.activeLens.kind == CameraLensKind.front ||
       settings.isFrontFacing;
 
-  /// The `0.5 / 1 / 2` buttons, derived from what this sensor can actually
+  /// Every rear camera on one scale, so the slider and the pills can speak in
+  /// the numbers the user means rather than in the open sensor's own.
+  ZoomSpan get zoomSpan => ZoomSpan.across(
+        lenses: backLenses,
+        activeLens: session?.activeLens ?? _fallbackLens,
+        activeRange: ZoomRange(min: settings.minZoom, max: settings.maxZoom),
+      );
+
+  /// A camera with no session yet still has to answer "what zoom am I at?".
+  static const CameraLens _fallbackLens = CameraLens(
+    id: '',
+    zoomFactor: 1,
+    label: '1',
+    kind: CameraLensKind.wide,
+  );
+
+  /// The zoom the user is actually looking at: the open lens's own zoom scaled
+  /// by what that lens sees. On an ultra-wide, 1.0 of sensor zoom is 0.5x.
+  double get effectiveZoom => zoomSpan.effectiveOf(settings.zoom);
+
+  /// What the *device* can reach, across every rear camera — not just the one
+  /// that happens to be open.
+  ///
+  /// On most phones this is simply the open camera's range, because the
+  /// platform publishes one logical rear camera that already spans every
+  /// sensor. On the minority that publish each sensor separately it is wider,
+  /// and the difference matters: there, the main camera stops at 1x, so a row
+  /// built from its range alone would never show a 0.5 button and the
+  /// lens-switching fallback behind that button could never be reached.
+  ZoomRange get reachableZoomRange => zoomSpan.offered;
+
+  /// The `0.5 / 1 / 2` buttons, derived from what the device can actually
   /// reach rather than from how many cameras the platform happens to list.
-  List<ZoomStop> get zoomStops =>
-      ZoomLadder.forRange(minZoom: settings.minZoom, maxZoom: settings.maxZoom);
+  List<ZoomStop> get zoomStops => ZoomLadder.forRange(
+        minZoom: reachableZoomRange.min,
+        maxZoom: reachableZoomRange.max,
+      );
 
   /// Which of [zoomStops] is currently lit.
-  ZoomStop? get activeZoomStop => ZoomLadder.activeStop(zoomStops, settings.zoom);
+  ZoomStop? get activeZoomStop => ZoomLadder.activeStop(zoomStops, effectiveZoom);
+
+  /// What the open sensor will accept as exposure compensation.
+  ExposureRange get exposureRange => session?.exposureRange ?? ExposureRange.fixed;
 
   bool get canSubmitBatch => hasShots && !isSubmitting && !isCapturing;
 
@@ -160,6 +222,9 @@ class CameraState extends Equatable {
     CaptureBatch? batch,
     FocusPoint? focusPoint,
     bool clearFocusPoint = false,
+    bool? isMeteringLocked,
+    bool? isSwitchingLens,
+    double? exposureOffset,
     CaptureFlashMode? flashMode,
     bool? showsGrid,
     bool? isCapturing,
@@ -174,6 +239,9 @@ class CameraState extends Equatable {
       session: clearSession ? null : (session ?? this.session),
       batch: batch ?? this.batch,
       focusPoint: clearFocusPoint ? null : (focusPoint ?? this.focusPoint),
+      isMeteringLocked: isMeteringLocked ?? this.isMeteringLocked,
+      isSwitchingLens: isSwitchingLens ?? this.isSwitchingLens,
+      exposureOffset: exposureOffset ?? this.exposureOffset,
       flashMode: flashMode ?? this.flashMode,
       showsGrid: showsGrid ?? this.showsGrid,
       isCapturing: isCapturing ?? this.isCapturing,
@@ -191,6 +259,9 @@ class CameraState extends Equatable {
         session?.activeLens,
         batch,
         focusPoint,
+        isMeteringLocked,
+        isSwitchingLens,
+        exposureOffset,
         flashMode,
         showsGrid,
         isCapturing,

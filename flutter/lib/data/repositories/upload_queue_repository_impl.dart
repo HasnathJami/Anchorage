@@ -129,7 +129,11 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
       onError: (Object error, StackTrace _) => StorageWriteFailure(cause: error),
     );
 
-    await _notify();
+    // Only when the claim was actually won. Republishing an unchanged queue is
+    // not merely wasteful here — the Upload Manager sweeps when the queue
+    // changes, so a notification that reports no change would start a sweep
+    // that changes nothing, which notifies again.
+    if (result.valueOrNull ?? false) await _notify();
     return result;
   }
 
@@ -161,7 +165,10 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
       onError: (Object error, StackTrace _) => StorageWriteFailure(cause: error),
     );
 
-    await _notify();
+    // Same reasoning as [claim], and it matters more here: the reaper runs at
+    // the top of *every* sweep, so an unconditional notification would put the
+    // engine in a permanent sweep-notify-sweep loop.
+    if ((result.valueOrNull ?? 0) > 0) await _notify();
     return result;
   }
 

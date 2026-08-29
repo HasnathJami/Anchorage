@@ -5,6 +5,7 @@ import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
@@ -40,6 +41,9 @@ class FakeUploadQueueRepository implements UploadQueueRepository {
 
   Failure? readFailure;
 
+  /// Set to make [enqueueAll] refuse, standing in for a full disk.
+  Failure? writeFailure;
+
   List<UploadTask> get tasks => _tasks.values.toList(growable: false);
 
   UploadTask? byId(String id) => _tasks[id];
@@ -73,6 +77,9 @@ class FakeUploadQueueRepository implements UploadQueueRepository {
 
   @override
   Future<Result<void>> enqueueAll(List<UploadTask> tasks) async {
+    final Failure? failure = writeFailure;
+    if (failure != null) return Result<void>.failure(failure);
+
     for (final UploadTask task in tasks) {
       _tasks.putIfAbsent(task.id, () => task);
     }
@@ -254,6 +261,20 @@ class FakeUploader implements UploaderPort {
   final Map<String, List<Failure?>> _scripts = <String, List<Failure?>>{};
   final List<String> attempts = <String>[];
 
+  /// Throughput to report, one progress tick per entry.
+  ///
+  /// Left null the transport behaves as it always did - a single fast tick at
+  /// half the file - so tests written before the bandwidth watchdog existed
+  /// are untouched by it.
+  List<int>? throughputTicks;
+
+  /// Called immediately before each tick, so a test can advance its clock and
+  /// let a grace window elapse.
+  void Function()? beforeTick;
+
+  /// Task ids the engine asked to stop.
+  final Set<String> cancelled = <String>{};
+
   /// `null` in the list means "this attempt succeeds".
   void script(String taskId, List<Failure?> outcomes) {
     _scripts[taskId] = List<Failure?>.of(outcomes);
@@ -269,13 +290,34 @@ class FakeUploader implements UploaderPort {
   }) async {
     attempts.add(task.id);
 
-    onProgress?.call(
-      UploadProgress(
-        bytesTransferred: task.sizeBytes ~/ 2,
-        totalBytes: task.sizeBytes,
-        throughputBytesPerSecond: 1024 * 1024,
-      ),
-    );
+    final List<int>? ticks = throughputTicks;
+    if (ticks == null) {
+      onProgress?.call(
+        UploadProgress(
+          bytesTransferred: task.sizeBytes ~/ 2,
+          totalBytes: task.sizeBytes,
+          throughputBytesPerSecond: 1024 * 1024,
+        ),
+      );
+    } else {
+      for (int i = 0; i < ticks.length; i++) {
+        if (cancelled.contains(task.id)) {
+          // What a real transport does when the engine pulls the plug on it.
+          return const Result<void>.failure(TimeoutFailure());
+        }
+        beforeTick?.call();
+        onProgress?.call(
+          UploadProgress(
+            bytesTransferred: ((i + 1) * task.sizeBytes / ticks.length).round(),
+            totalBytes: task.sizeBytes,
+            throughputBytesPerSecond: ticks[i],
+          ),
+        );
+      }
+      if (cancelled.contains(task.id)) {
+        return const Result<void>.failure(TimeoutFailure());
+      }
+    }
 
     final List<Failure?>? script = _scripts[task.id];
     final Failure? failure =
@@ -286,7 +328,7 @@ class FakeUploader implements UploaderPort {
   }
 
   @override
-  Future<void> cancel(String taskId) async {}
+  Future<void> cancel(String taskId) async => cancelled.add(taskId);
 }
 
 /// A link the test drives by hand.
@@ -394,18 +436,33 @@ CameraSession sessionFor(
   double minZoom = 1,
   double maxZoom = 8,
   int previewKey = 1,
+  List<CameraLens>? lenses,
+  ExposureRange exposureRange =
+      const ExposureRange(min: -2, max: 2, step: 0.5),
 }) =>
     CameraSession(
       previewAspectRatio: 0.5625,
       settings: CameraSettings(zoom: zoom, minZoom: minZoom, maxZoom: maxZoom),
-      availableLenses: <CameraLens>[ultraWideLens, wideLens],
+      exposureRange: exposureRange,
+      // Two rear cameras by default - the awkward shape, where the quick-zoom
+      // row has to reach past the open sensor. Pass [lenses] for a device that
+      // publishes a single logical rear camera.
+      availableLenses: lenses ?? <CameraLens>[ultraWideLens, wideLens],
       activeLens: lens,
       previewKey: previewKey,
     );
 
 /// A camera that never touches hardware.
 class FakeCamera implements CameraPort {
-  FakeCamera();
+  FakeCamera({this.captureDirectory});
+
+  /// Where [capture] claims to have written its files.
+  ///
+  /// Left null, the paths are fictional, which is fine for every test that
+  /// only asserts on state. A widget test that actually *renders* the batch
+  /// thumbnail needs bytes on disk, so it points this at a real directory
+  /// holding real images.
+  final String? captureDirectory;
 
   Failure? initialiseFailure;
   Failure? captureFailure;
@@ -465,6 +522,29 @@ class FakeCamera implements CameraPort {
     return const Result<void>.success(null);
   }
 
+  /// Every lock state the Bloc has pushed at the hardware, in order.
+  final List<bool> lockCalls = <bool>[];
+
+  /// Every exposure offset the Bloc has pushed at the hardware, in order.
+  final List<double> exposureCalls = <double>[];
+
+  /// Set to simulate a sensor that refuses to hold its metering.
+  Failure? lockFailure;
+
+  @override
+  Future<Result<void>> setMeteringLocked(bool locked) async {
+    lockCalls.add(locked);
+    final Failure? failure = lockFailure;
+    if (failure != null) return Result<void>.failure(failure);
+    return const Result<void>.success(null);
+  }
+
+  @override
+  Future<Result<void>> setExposureOffset(double ev) async {
+    exposureCalls.add(ev);
+    return const Result<void>.success(null);
+  }
+
   @override
   Future<Result<CapturedShot>> capture({required double zoomLevel}) async {
     captureCount++;
@@ -474,7 +554,9 @@ class FakeCamera implements CameraPort {
     return Result<CapturedShot>.success(
       CapturedShot(
         id: 'shot-$captureCount',
-        filePath: '/tmp/shot-$captureCount.jpg',
+        filePath: captureDirectory == null
+            ? '/tmp/shot-$captureCount.jpg'
+            : '$captureDirectory/shot-$captureCount.png',
         displayName: 'HARBOR_$captureCount.jpg',
         sizeBytes: 1024 * 1024,
         capturedAt: DateTime(2026, 8, 28, 9, captureCount),
