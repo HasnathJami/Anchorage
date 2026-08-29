@@ -14,6 +14,7 @@ import com.anchorage.perimeter.domain.geo.HaversineDistanceCalculator
 import com.anchorage.perimeter.domain.model.GeoPoint
 import com.anchorage.perimeter.domain.policy.AttendanceWindow
 import com.anchorage.perimeter.domain.policy.GeofenceEvaluator
+import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.anchorage.perimeter.domain.policy.ProximityStatus
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
@@ -161,6 +162,58 @@ class ObserveAttendanceStatusUseCaseTest {
             tracker.emit(Outcome.Success(fixAt(point = fiftyFive, accuracyMeters = 5f)))
             assertThat(awaitItem().reading?.status).isEqualTo(ProximityStatus.OUTSIDE)
 
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `reports the fence it is actually enforcing, not the default`() = runTest {
+        // The screen prints this number ("move within N metres"), so it must be
+        // the same one the decision uses. In production the radius is a
+        // property of the *site* and would arrive from a server - a 200 m
+        // campus must not be described to the user as 50 m.
+        val wideSite = ObserveAttendanceStatusUseCase(
+            officeAnchorRepository = officeRepository,
+            locationTracker = tracker,
+            attendanceRepository = attendanceRepository,
+            geofenceEvaluator = GeofenceEvaluator(
+                HaversineDistanceCalculator,
+                GeofencePolicy(radiusMeters = 200.0),
+            ),
+            timeProvider = time,
+        )
+
+        officeRepository.emit(Outcome.Success(anchorAt()))
+
+        wideSite().test {
+            val status = awaitItem()
+            assertThat(status.radiusMeters).isEqualTo(200.0)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `a fix beyond 50 m is inside a wider site`() = runTest {
+        // The radius is not decoration: widening it changes the answer.
+        val wideSite = ObserveAttendanceStatusUseCase(
+            officeAnchorRepository = officeRepository,
+            locationTracker = tracker,
+            attendanceRepository = attendanceRepository,
+            geofenceEvaluator = GeofenceEvaluator(
+                HaversineDistanceCalculator,
+                GeofencePolicy(radiusMeters = 500.0),
+            ),
+            timeProvider = time,
+        )
+
+        officeRepository.emit(Outcome.Success(anchorAt()))
+
+        wideSite().test {
+            awaitItem()
+            tracker.emit(Outcome.Success(fixAt(point = farPoint, accuracyMeters = 5f)))
+
+            val status = awaitItem()
+            assertThat(status.reading?.status).isEqualTo(ProximityStatus.INSIDE)
             cancelAndIgnoreRemainingEvents()
         }
     }

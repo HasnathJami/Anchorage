@@ -2,6 +2,7 @@ package com.anchorage.perimeter.domain.model
 
 import com.anchorage.perimeter.core.common.error.AppError
 import com.anchorage.perimeter.domain.policy.AttendanceWindow
+import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.anchorage.perimeter.domain.policy.GeofenceReading
 
 /**
@@ -20,6 +21,8 @@ data class AttendanceStatus(
     val todayRecord: AttendanceRecord?,
     val window: AttendanceWindow,
     val isWindowOpen: Boolean,
+    /** The fence being enforced, so the UI never has to guess at it. */
+    val radiusMeters: Double = GeofencePolicy.DEFAULT_RADIUS_METERS,
     /**
      * The position this status was measured from, if any.
      *

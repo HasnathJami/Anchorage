@@ -3,6 +3,7 @@ package com.anchorage.perimeter.presentation.attendance
 import androidx.compose.runtime.Immutable
 import com.anchorage.perimeter.domain.model.AttendanceRecord
 import com.anchorage.perimeter.domain.model.OfficeAnchor
+import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.anchorage.perimeter.domain.policy.GeofenceReading
 
 /**
@@ -44,6 +45,18 @@ data class AttendanceUiState(
     val notice: AttendanceNotice? = null,
 
     val canMarkAttendance: Boolean = false,
+
+    /**
+     * The fence being enforced, in metres.
+     *
+     * Read from the injected policy rather than from
+     * `GeofencePolicy.DEFAULT_RADIUS_METERS`, so the copy on screen and the
+     * decision behind it can never name different numbers. It matters for the
+     * case this app stands in for: in production the radius is a property of
+     * the *site* and arrives from a server, and a screen that hard-codes 50
+     * would go on saying 50 over a 200 m campus.
+     */
+    val radiusMeters: Double = GeofencePolicy.DEFAULT_RADIUS_METERS,
 
     /**
      * False once the user has been asked and has said no.

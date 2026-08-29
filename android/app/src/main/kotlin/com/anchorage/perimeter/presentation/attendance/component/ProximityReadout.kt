@@ -162,7 +162,7 @@ fun ProximityReadout(
 /** The one sentence that tells the user what to do next, per state. */
 @Composable
 private fun helperText(state: AttendanceUiState): String {
-    val radius = GeofencePolicy.DEFAULT_RADIUS_METERS.toInt()
+    val radius = state.radiusMeters.toInt()
     val record = state.todayRecord
 
     return when {

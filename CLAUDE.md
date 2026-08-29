@@ -251,7 +251,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **147 Android unit tests**, **326 Flutter tests**, plus 5 Compose instrumentation
+Current state: **149 Android unit tests**, **326 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

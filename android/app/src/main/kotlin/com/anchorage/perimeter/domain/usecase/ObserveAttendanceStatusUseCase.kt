@@ -140,6 +140,7 @@ class ObserveAttendanceStatusUseCase(
                 todayRecord = todayRecord,
                 window = window,
                 isWindowOpen = window.contains(timeProvider.localTime()),
+                radiusMeters = geofenceEvaluator.radiusMeters,
                 lastFix = fix,
             ),
             lastFix = fix,

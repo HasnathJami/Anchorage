@@ -47,19 +47,48 @@ messages and its tests all still exist, and the tests that cover the rule build 
 narrow window rather than reading the default. Restoring the real window is two constants in
 `AttendanceWindow`.
 
-**2. There is no backend, so the office location is not *verified* — only recorded.**
-This is the significant one. In a real deployment, pressing **Set Office Location** would send
-those coordinates to a server, and the server would decide whether that place genuinely *is*
-the user's office — checking it against the employer's site register, an admin-assigned
-geofence, or an HR record. That validation is the entire point of the feature in production.
+**2. There is no backend, so the office is *chosen by the user* rather than *issued to them*.**
+This is the significant one, and it inverts the direction the feature is supposed to run in.
 
-The brief supplies no API, so there is nothing to ask. The app therefore accepts whatever
-coordinate the user chooses: they can anchor their own living room and check in from the sofa,
-and the app has no way to know and no standing to object. Everything *around* that decision is
-real and enforced — the Haversine distance, the 50 m radius, the accuracy gate that rejects a
-fix too coarse to trust, the time window, the once-a-day rule. What is missing is **authority**:
-the app can prove you were within 50 m of *a* coordinate, but not that the coordinate was your
-office. That is a server's job, and there is no server.
+**In a real deployment the app would not offer a picker at all.** The office would be served
+**from the backend**: an employer registers a site, and the app fetches that site's
+**latitude, longitude and geofence radius** for the signed-in employee. The radius is part of
+the payload rather than a constant, because it is a property of the *place* — a single-floor
+office is a tight 50 m, a warehouse yard or a campus might be 200 m or more, and one hard-coded
+number cannot be right for both. Setting an office would then be an **admin action on a server**,
+not a button in the employee's app, and "is this really your office?" would be answered by the
+site register before the app ever measured a distance.
+
+The brief supplies no API, so there is nothing to fetch and nothing to ask. This build therefore
+does the only honest thing available to it: it lets the user place the office themselves and
+stores it locally. That means they can anchor their own living room and check in from the sofa,
+and the app has no way to know and no standing to object.
+
+Everything *around* that decision is real and enforced — the Haversine distance, the radius, the
+hysteresis, the accuracy gate that rejects a fix too coarse to trust, the time window, the
+once-a-day rule. What is missing is **authority**: the app can prove you were within *n* metres
+of *a* coordinate, but not that the coordinate was your office, or that *n* was the right number
+for it. Both of those are a server's job, and there is no server.
+
+The seams for it are already in place, which is the part I would want a reviewer to check
+rather than take on trust:
+
+* `OfficeAnchorRepository` is a **port**, and the DataStore implementation is one adapter behind
+  it. A remote source — fetch on sign-in, cache locally, refresh on change — is a second adapter,
+  not a refactor.
+* `GeofencePolicy.radiusMeters` is a **constructor parameter**, not a literal buried in the
+  distance check. It is bound to the 50 m default in `UseCaseModule` because 50 m is what the
+  brief mandates; binding it to a value that arrived from a server is a one-line change there.
+* **Every gate, dial and message reads that policy rather than the constant.** This was *not*
+  true when I first wrote this section — three UI call sites reached for
+  `GeofencePolicy.DEFAULT_RADIUS_METERS` directly, which is correct only for as long as nothing
+  ever supplies a different radius. A server-issued site radius is precisely the change that
+  would have made the screen quietly lie: the fence would move to 200 m and the copy underneath
+  would go on saying *"move within 50 metres"*. The radius now travels from the evaluator
+  through `AttendanceStatus` to the UI, and two tests hold it there — one that a 200 m site is
+  *reported* as 200 m, and one that a fix 100 m out is `INSIDE` a 500 m site.
+* The same is true of `exitHysteresisMeters` and both accuracy thresholds, so a server could tune
+  a noisy site without an app release.
 
 **3. Attendance records live only on the device.**
 Every check-in is written to a local Room database in app-private storage, and stays there.
@@ -938,18 +967,18 @@ over pure domain code, with fakes standing in for hardware.
 | Suite | Tests | What it covers |
 | --- | --- | --- |
 | `android core/common/` | 6 | `Outcome` combinators |
-| `android domain/` | 60 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
+| `android domain/` | 62 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/` | 58 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 326 | Camera Bloc (60), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **473** | |
+| **Total** | **475** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew testDebugUnitTest   # 147 tests
+cd android  && ./gradlew testDebugUnitTest   # 149 tests
 cd ../flutter && flutter test        # 326 tests
 ```
 

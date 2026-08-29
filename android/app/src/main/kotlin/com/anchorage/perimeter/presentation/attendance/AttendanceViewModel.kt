@@ -354,6 +354,7 @@ class AttendanceViewModel @Inject constructor(
             todayRecord = status.todayRecord,
             proximity = proximity,
             isWindowOpen = status.isWindowOpen,
+            radiusMeters = status.radiusMeters,
             windowLabel = status.window.format(),
             canMarkAttendance = status.canMarkAttendance,
             // Ownership rule: the stream owns ambient notices and may replace

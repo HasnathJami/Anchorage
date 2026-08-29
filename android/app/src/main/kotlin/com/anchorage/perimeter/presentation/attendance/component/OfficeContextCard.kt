@@ -83,7 +83,7 @@ fun OfficeContextCard(
             } else {
                 stringResource(
                     R.string.attendance_office_help_configured,
-                    GeofencePolicy.DEFAULT_RADIUS_METERS.toInt(),
+                    state.radiusMeters.toInt(),
                 )
             },
             style = AnchorageTheme.typography.body,
