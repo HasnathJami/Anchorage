@@ -12,12 +12,14 @@ import com.anchorage.perimeter.domain.fake.anchorAt
 import com.anchorage.perimeter.domain.fake.fixAt
 import com.anchorage.perimeter.domain.geo.HaversineDistanceCalculator
 import com.anchorage.perimeter.domain.model.GeoPoint
+import com.anchorage.perimeter.domain.policy.AttendanceWindow
 import com.anchorage.perimeter.domain.policy.GeofenceEvaluator
 import com.anchorage.perimeter.domain.policy.ProximityStatus
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import java.time.Instant
+import java.time.LocalTime
 
 class ObserveAttendanceStatusUseCaseTest {
 
@@ -165,10 +167,25 @@ class ObserveAttendanceStatusUseCaseTest {
 
     @Test
     fun `closes the gate outside the attendance window`() = runTest {
+        // The shipped default now spans the whole day, so this builds a
+        // use case with the reference design's morning window instead: a
+        // gate that nothing can be outside of tests nothing.
+        val narrowUseCase = ObserveAttendanceStatusUseCase(
+            officeAnchorRepository = officeRepository,
+            locationTracker = tracker,
+            attendanceRepository = attendanceRepository,
+            geofenceEvaluator = GeofenceEvaluator(HaversineDistanceCalculator),
+            timeProvider = time,
+            window = AttendanceWindow(
+                opensAt = LocalTime.of(9, 0),
+                closesAt = LocalTime.of(10, 30),
+            ),
+        )
+
         officeRepository.emit(Outcome.Success(anchorAt()))
         time.instant = Instant.parse("2026-08-28T10:00:00Z") // 16:00 Dhaka
 
-        useCase().test {
+        narrowUseCase().test {
             awaitItem()
             tracker.emit(Outcome.Success(fixAt(point = nearPoint, accuracyMeters = 5f)))
 

@@ -31,8 +31,23 @@ data class AttendanceWindow(
     }
 
     companion object {
-        val DEFAULT_OPENS_AT: LocalTime = LocalTime.of(9, 0)
-        val DEFAULT_CLOSES_AT: LocalTime = LocalTime.of(10, 30)
+        /**
+         * **Currently the whole day**, so the app can be picked up and tried at
+         * any hour.
+         *
+         * The reference design prints `AVAILABLE 09:00 AM - 10:30 AM`, and that
+         * is the shape this rule is built for - a real morning check-in window.
+         * It is widened here on purpose rather than removed: every gate, every
+         * message and every test that enforces it is still in place, and
+         * narrowing it again is a one-line change to these two constants.
+         *
+         * `23:59` rather than midnight because [contains] is inclusive at both
+         * ends and the constructor requires the window to open before it
+         * closes - a window from `00:00` to `00:00` is not a day, it is an
+         * instant.
+         */
+        val DEFAULT_OPENS_AT: LocalTime = LocalTime.MIDNIGHT
+        val DEFAULT_CLOSES_AT: LocalTime = LocalTime.of(23, 59)
 
         val Default = AttendanceWindow()
     }

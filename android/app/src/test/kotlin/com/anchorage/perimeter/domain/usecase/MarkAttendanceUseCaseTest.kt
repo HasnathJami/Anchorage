@@ -13,12 +13,14 @@ import com.anchorage.perimeter.domain.fake.fixAt
 import com.anchorage.perimeter.domain.geo.HaversineDistanceCalculator
 import com.anchorage.perimeter.domain.model.AttendanceRecord
 import com.anchorage.perimeter.domain.model.GeoPoint
+import com.anchorage.perimeter.domain.policy.AttendanceWindow
 import com.anchorage.perimeter.domain.policy.GeofenceEvaluator
 import com.anchorage.perimeter.domain.policy.GeofencePolicy
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import java.time.Instant
+import java.time.LocalTime
 
 /**
  * The gate that actually decides whether someone is present. Every rejection
@@ -35,13 +37,17 @@ class MarkAttendanceUseCaseTest {
     private val tracker = FakeLocationTracker()
     private val time = FixedTimeProvider(instant = insideWindow)
 
-    private fun useCase(policy: GeofencePolicy = GeofencePolicy.Default) = MarkAttendanceUseCase(
+    private fun useCase(
+        policy: GeofencePolicy = GeofencePolicy.Default,
+        window: AttendanceWindow = AttendanceWindow.Default,
+    ) = MarkAttendanceUseCase(
         officeAnchorRepository = officeRepository,
         attendanceRepository = attendanceRepository,
         locationTracker = tracker,
         geofenceEvaluator = GeofenceEvaluator(HaversineDistanceCalculator, policy),
         timeProvider = time,
         idGenerator = SequentialIdGenerator(),
+        window = window,
     )
 
     /** ~22 m north of the anchor. */
@@ -66,9 +72,16 @@ class MarkAttendanceUseCaseTest {
 
     @Test
     fun `rejects before touching GPS when the window is closed`() = runTest {
+        // An explicit morning window: the shipped default now spans the
+        // whole day, and a rule about being outside a window needs one that
+        // something can be outside of.
+        val window = AttendanceWindow(
+            opensAt = LocalTime.of(9, 0),
+            closesAt = LocalTime.of(10, 30),
+        )
         time.instant = Instant.parse("2026-08-28T10:00:00Z") // 16:00 Dhaka
 
-        val result = useCase()()
+        val result = useCase(window = window)()
 
         assertThat((result as Outcome.Failure).error)
             .isInstanceOf(AppError.Attendance.WindowClosed::class.java)

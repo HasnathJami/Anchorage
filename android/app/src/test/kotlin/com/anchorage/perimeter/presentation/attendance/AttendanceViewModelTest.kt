@@ -4,6 +4,7 @@ import app.cash.turbine.test
 import com.anchorage.perimeter.core.common.error.AppError
 import com.anchorage.perimeter.core.common.outcome.Outcome
 import com.anchorage.perimeter.domain.geo.HaversineDistanceCalculator
+import com.anchorage.perimeter.domain.policy.AttendanceWindow
 import com.anchorage.perimeter.domain.policy.GeofenceEvaluator
 import com.anchorage.perimeter.domain.usecase.CaptureOfficeAnchorUseCase
 import com.anchorage.perimeter.domain.usecase.ClearOfficeAnchorUseCase
@@ -23,6 +24,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import java.time.Instant
+import java.time.LocalTime
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AttendanceViewModelTest {
@@ -50,7 +52,14 @@ class AttendanceViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun buildViewModel(): AttendanceViewModel {
+    /**
+     * @param window narrow it to assert the *rule*. The shipped default is
+     *   currently the whole day so the app can be tried at any hour, which
+     *   makes it useless for testing a gate that only bites outside one.
+     */
+    private fun buildViewModel(
+        window: AttendanceWindow = AttendanceWindow.Default,
+    ): AttendanceViewModel {
         val evaluator = GeofenceEvaluator(HaversineDistanceCalculator)
         return AttendanceViewModel(
             observeAttendanceStatus = ObserveAttendanceStatusUseCase(
@@ -59,6 +68,7 @@ class AttendanceViewModelTest {
                 attendanceRepository = attendanceRepository,
                 geofenceEvaluator = evaluator,
                 timeProvider = time,
+                window = window,
             ),
             captureOfficeAnchor = CaptureOfficeAnchorUseCase(
                 locationTracker = tracker,
@@ -306,7 +316,7 @@ class AttendanceViewModelTest {
         val state = viewModel.uiState.value
         assertThat(state.proximity).isEqualTo(ProximityUi.InRange)
         assertThat(state.canMarkAttendance).isTrue()
-        assertThat(state.windowLabel).isEqualTo("09:00 AM - 10:30 AM")
+        assertThat(state.windowLabel).isEqualTo("12:00 AM - 11:59 PM")
     }
 
     @Test
@@ -358,6 +368,16 @@ class AttendanceViewModelTest {
 
     @Test
     fun `the window closing locks the button even while in range`() = runTest(dispatcher) {
+        // Built with the reference design's morning window rather than the
+        // shipped all-day one: the gate is the thing under test, so the test
+        // has to supply a window it can actually be outside of.
+        viewModel = buildViewModel(
+            window = AttendanceWindow(
+                opensAt = LocalTime.of(9, 0),
+                closesAt = LocalTime.of(10, 30),
+            ),
+        )
+
         grantPermission()
         officeRepository.emit(Outcome.Success(officeAnchor()))
         time.instant = Instant.parse("2026-08-28T10:00:00Z") // 16:00 Dhaka
@@ -406,6 +426,12 @@ class AttendanceViewModelTest {
         // distance is *worth knowing*. Someone arriving at 16:00 still needs to
         // see how far out they are - that is how they learn the app is working
         // and where the perimeter actually sits.
+        viewModel = buildViewModel(
+            window = AttendanceWindow(
+                opensAt = LocalTime.of(9, 0),
+                closesAt = LocalTime.of(10, 30),
+            ),
+        )
         grantPermission()
         officeRepository.emit(Outcome.Success(officeAnchor()))
         time.instant = Instant.parse("2026-08-28T10:00:00Z") // 16:00 Dhaka

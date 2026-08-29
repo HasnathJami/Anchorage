@@ -412,7 +412,7 @@ private fun AttendanceOutOfRangePreview() {
                 reading = previewReading(120.0, inside = false),
                 proximity = ProximityUi.OutOfRange,
                 isWindowOpen = true,
-                windowLabel = "09:00 AM - 10:30 AM",
+                windowLabel = "12:00 AM - 11:59 PM",
                 canMarkAttendance = false,
             ),
             snackbarHostState = SnackbarHostState(),
@@ -434,7 +434,7 @@ private fun AttendanceInRangePreview() {
                 reading = previewReading(12.0, inside = true),
                 proximity = ProximityUi.InRange,
                 isWindowOpen = true,
-                windowLabel = "09:00 AM - 10:30 AM",
+                windowLabel = "12:00 AM - 11:59 PM",
                 canMarkAttendance = true,
             ),
             snackbarHostState = SnackbarHostState(),
@@ -452,7 +452,7 @@ private fun AttendanceNoOfficePreview() {
         AttendanceContent(
             state = AttendanceUiState(
                 isBootstrapping = false,
-                windowLabel = "09:00 AM - 10:30 AM",
+                windowLabel = "12:00 AM - 11:59 PM",
                 hasLocationPermission = false,
             ),
             snackbarHostState = SnackbarHostState(),

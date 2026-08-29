@@ -177,6 +177,7 @@ rather than blocking mock locations. Match that standard.
 
 | Thing | Decision | Why |
 | --- | --- | --- |
+| Attendance window | **Temporarily the whole day** (`12:00 AM - 11:59 PM`) | Widened so the app can be tried and screenshotted at any hour. The product rule is the reference design's `09:00 AM - 10:30 AM`, and it is two constants in `AttendanceWindow`. **Every test that covers the rule builds its own narrow window rather than reading the default**, so widening it for a demo cannot quietly delete the coverage of the thing it widens. Narrow it again before shipping. |
 | Geofence hysteresis | Entry at 50 m, exit at 58 m — on the **dial only** | GPS jitter strobes a bare threshold. The check-in itself uses the true 50 m with no forgiveness. |
 | Location updates register with an **`Executor`**, never a null `Looper` | `requestLocationUpdates(request, dispatchers.io.asExecutor(), callback)` | The `Looper` overload treats `null` as "the calling thread's", and the `callbackFlow` runs on `dispatchers.io`, which has none. Play Services throws while wiring the callback, the stream ends before one update arrives, and the screen sits on `LOCATING` having asked for nothing. Intermittent, invisible in review, and the cause of "it does not update when I move". |
 | Live distance is a **Flow**, never WorkManager | `callbackFlow` at 2 s, `PRIORITY_HIGH_ACCURACY`, no distance filter | WorkManager's periodic minimum is **15 minutes** and it is built to outlive the app - the opposite of a read-out that is only interesting while someone is watching it. WorkManager is right for the Flutter upload queue and wrong for this. |
@@ -249,7 +250,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **146 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
+Current state: **147 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

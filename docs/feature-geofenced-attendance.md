@@ -98,6 +98,10 @@ Failing closed is the only safe default for a value that gates a check-in.
 
 ### The attendance window
 
+**The shipped default is currently the whole day** (`12:00 AM - 11:59 PM`), widened so the
+app can be tried and screenshotted at any hour; the two constants in `AttendanceWindow` are
+the only thing that changes, and the rule below is otherwise untouched.
+
 The reference design prints `AVAILABLE 09:00 AM - 10:30 AM`. `AttendanceWindow` makes that a
 real, enforced rule. Both ends are inclusive, because "closes at 10:30" reads to a human as
 "10:30 still works".

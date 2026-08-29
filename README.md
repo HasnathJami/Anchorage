@@ -769,18 +769,18 @@ over pure domain code, with fakes standing in for hardware.
 | Suite | Tests | What it covers |
 | --- | --- | --- |
 | `android core/common/` | 6 | `Outcome` combinators |
-| `android domain/` | 59 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
+| `android domain/` | 60 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/` | 58 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **467** | |
+| **Total** | **468** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew testDebugUnitTest   # 146 tests
+cd android  && ./gradlew testDebugUnitTest   # 147 tests
 cd ../flutter && flutter test        # 321 tests
 ```
 
@@ -797,13 +797,39 @@ Reference designs supplied with the brief are in [`design/`](design/).
 
 ### Task 1 — Anchorage Perimeter: the attendance flow
 
-| 1. Permission | 2. Nothing anchored | 3. The picker |
-| --- | --- | --- |
-| <img src="docs/screenshots/perimeter-1-permission.png" width="240" /> | <img src="docs/screenshots/perimeter-2-no-office.png" width="240" /> | <img src="docs/screenshots/perimeter-3-office-picker.png" width="240" /> |
+| 1. Permission | 2. Nothing anchored | 3. The picker | 4. Out of range |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/perimeter-1-permission.png" width="185" /> | <img src="docs/screenshots/perimeter-2-no-office.png" width="185" /> | <img src="docs/screenshots/perimeter-3-office-picker.png" width="185" /> | <img src="docs/screenshots/perimeter-4-out-of-range.png" width="185" /> |
 
-| 4. Out of range | 5. In range, window closed |
-| --- | --- |
-| <img src="docs/screenshots/perimeter-4-out-of-range.png" width="240" /> | <img src="docs/screenshots/perimeter-5-in-range.png" width="240" /> |
+| 5. Time gate | 6. Ready | 7. Checked in | 8. History |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/perimeter-5-in-range.png" width="185" /> | <img src="docs/screenshots/perimeter-6-ready.png" width="185" /> | <img src="docs/screenshots/perimeter-7-checked-in.png" width="185" /> | <img src="docs/screenshots/perimeter-8-history.png" width="185" /> |
+
+> ### ⏱️ A note on the times in captures 6–8
+>
+> Captures 6, 7 and 8 read **`AVAILABLE 12:00 AM – 11:59 PM`** and are timestamped **10:19 pm**.
+> That is **not** the product rule — I widened the check-in window to the full day **on purpose,
+> so that this flow could be captured and tried at any hour**. Without it, the interesting half
+> of the feature is only reachable between 09:00 and 10:30 in the morning.
+>
+> **In real use the attendance window is deliberately narrow.** The reference design prints
+> `AVAILABLE 09:00 AM – 10:30 AM`, and that is the rule the app is built around: a morning
+> check-in window that closes. **Capture 5 is that rule doing its job** — the user is *in
+> range* at 19 m with a green ring, and the button is still locked, because it was 22:00 and
+> the window had closed.
+>
+> Nothing about the enforcement was relaxed to take these screenshots. The window is one value
+> in one place — `AttendanceWindow.DEFAULT_OPENS_AT` / `DEFAULT_CLOSES_AT` — and every gate,
+> message and test around it is unchanged. Restoring the morning window is a two-line edit:
+>
+> ```kotlin
+> val DEFAULT_OPENS_AT:  LocalTime = LocalTime.of(9, 0)
+> val DEFAULT_CLOSES_AT: LocalTime = LocalTime.of(10, 30)
+> ```
+>
+> The tests that cover the rule build their **own** narrow window rather than reading the
+> default, precisely so that widening it for a demo cannot quietly delete the coverage of the
+> thing it widens.
 
 **How the flow reads, step by step.**
 
@@ -814,8 +840,7 @@ Reference designs supplied with the brief are in [`design/`](design/).
 
 2. **Nothing is anchored yet.** `STEP 1: OFFICE CONTEXT` carries a grey status dot, the map
    thumbnail reads *"No office anchored yet"*, the dial reads `--` over `NO OFFICE`, and the
-   check-in panel is locked behind a padlock. The screen states the one thing to do next:
-   *"Anchor your office above to start measuring distance."*
+   check-in panel is locked behind a padlock. The screen states the one thing to do next.
 
 3. **Set Office Location opens a real map.** OpenStreetMap tiles, a draggable pin, live
    coordinates, and a crosshair that jumps to the current fix. The brief asks only for
@@ -827,17 +852,50 @@ Reference designs supplied with the brief are in [`design/`](design/).
 
 4. **Out of range.** The pin above was placed a few kilometres away, and the screen answers
    immediately: a red arc proportional to `distance / 50 m`, `3.6 km` in the middle,
-   `OUT OF RANGE`, and the instruction to move within 50 metres. The office card now offers
-   `Update Office Location` and records that this anchor was *placed by hand* rather than
-   measured — a hand-placed pin has no accuracy figure, so none is invented.
+   `OUT OF RANGE`, and the instruction to move within 50 metres. The card records that this
+   anchor was *placed by hand* rather than measured — a hand-placed pin has no accuracy
+   figure, so none is invented.
 
-5. **In range — and still locked.** Re-anchoring where the phone is standing turns the arc
-   green at `19m` with `IN RANGE`, and the button *stays* locked because it is 22:00 and the
-   window is `09:00 AM – 10:30 AM`. This is the whole design in one frame: **two independent
-   gates**, geofence and time, each saying so in its own words. Between the two captures the
-   distance moved 23 m → 19 m on its own, which is the live indicator working.
+5. **The time gate, on its own.** Re-anchored where the phone stands, the arc turns green at
+   `19m` with `IN RANGE` — and the button *stays locked*, because it was 22:00 and the window
+   was `09:00 AM – 10:30 AM`. **Two independent gates, geofence and time**, each saying so in
+   its own words. This is the real-world behaviour; see the note above.
 
-The distance is a **Kotlin Flow** over `FusedLocationProviderClient` at a 2-second,
+6. **Ready.** With the window open, the panel turns blue: an **open** padlock, a solid
+   `Mark Attendance` button, and the availability caption beneath it. Between captures the
+   distance moved 23 m → 19 m → 11 m on its own, which is the live indicator working.
+
+7. **Checked in.** The pill turns `CHECKED IN`, the panel's border turns green, and the helper
+   line records the receipt: *"Attendance recorded at 10:19 pm, 9m from the office."* The
+   button is now **disabled even though the user is still in range and still inside the
+   window** — which is the once-a-day rule, visible.
+
+8. **History.** A durable Room-backed log: date, time, and how far from the office the record
+   was taken. Anchorage Perimeter stores the *distance at the moment of check-in*, so a record
+   can be audited later rather than merely trusted.
+
+#### One check-in per day, enforced three times over
+
+A person may mark attendance **once per calendar day**, and that is enforced at every layer
+rather than trusted to any one of them:
+
+| Layer | What it does | Why it is not enough on its own |
+| --- | --- | --- |
+| **UI** — `AttendanceStatus.canMarkAttendance` | Disables the button the moment today's record exists (capture 7) | A disabled button is a courtesy, not a guarantee: it is a projection of state, and state can be stale |
+| **Domain** — `MarkAttendanceUseCase` | Looks up today's record and returns `AlreadyMarked` **before touching the GPS** | This is the real gate. Checking first also means a duplicate tap never spends a fix, which is the expensive part |
+| **Database** — Room | A unique index on the date, `onConflict = ABORT`, and the violation translated back to `AlreadyMarked` | Two writes can race — a double tap, or the same day from two entry points. Only the database can settle that, and `ABORT` is chosen over `REPLACE` because a duplicate check-in is a violation to *report*, not to silently overwrite |
+
+"Today" is resolved through the injected `TimeProvider` in the device's own zone, and it is
+recomputed on **every** emission rather than captured when the screen opened — so a session
+left open across midnight re-arms correctly instead of reporting yesterday's check-in.
+
+`MarkAttendanceUseCase` re-validates *everything* rather than trusting what the button looked
+like: office configured, not already marked, window open, and a **fresh** fix inside the
+fence. Between the frame that enabled the button and the tap that follows it, the user can
+walk out of the perimeter, the clock can cross the closing time, or another device can record
+the day — so the decision is made again, at the moment it matters, from data fetched then.
+
+The distance itself is a **Kotlin Flow** over `FusedLocationProviderClient` at a 2-second,
 high-accuracy cadence — not WorkManager, whose 15-minute floor makes it structurally unable
 to drive a live read-out. It runs only while the screen is in the foreground, and stops with
 it.
@@ -896,23 +954,21 @@ it.
 
 ---
 
-### What is not pictured
+### A note on the captures
 
-Two states could not be captured honestly on the day:
+Every screenshot above is from a real device — a Galaxy A54 running Android 16.
 
-* **A successful check-in**, because the window is `09:00 AM – 10:30 AM` and these were taken
-  at 22:00. Capture 5 shows the gate doing its job instead; the success state is a green
-  `CHECKED IN` pill with the time and distance of the record.
-* **The attendance history list with entries**, for the same reason — it currently shows its
-  empty state.
+**The check-in window was widened to the full day to take captures 6–8**, and only for that.
+See the callout under the Task 1 grid: the product rule is the reference design's
+`09:00 AM – 10:30 AM`, capture 5 shows that rule refusing a check-in at 22:00, and restoring
+it is a two-line edit to `AttendanceWindow`.
 
-> **Before making this repository public:** `perimeter-5-in-range.png` contains real
-> coordinates of wherever the phone was standing, because an "in range" screenshot is by
-> definition taken at the anchored office. `perimeter-3-office-picker.png` was deliberately
-> panned to a neutral part of the city for the same reason. Camera previews were kept dark on
-> purpose. Retake any capture you are not comfortable publishing.
-
----
+> **Before making this repository public:** `perimeter-5-in-range.png`, `-6`, `-7` and `-8`
+> were taken at the anchored office, so they carry real coordinates and a real timestamp — an
+> "in range" screenshot is by definition taken where the office is.
+> `perimeter-3-office-picker.png` was deliberately panned to a neutral part of the city for
+> the same reason, and camera previews were kept dark on purpose. Retake anything you would
+> rather not publish.
 
 ## Further documentation
 
