@@ -108,7 +108,7 @@ Naming by role stops a developer reaching for a near-miss and slowly eroding the
 | `eyebrow` | 10 SemiBold, +1.6 | "BATCH SYNC PROGRESS", "PENDING UPLOADS (5)" |
 | `itemTitle` | 14 SemiBold | File names |
 | `itemMeta` | 11 Regular | Sizes |
-| `itemStatus` | 10 Bold, +1.1 | "RETRYING... (ATTEMPT 3/5)" |
+| `itemStatus` | 10 Bold, +1.1 | "RETRYING... (ATTEMPT 3/3)" |
 | `button` | 13 Bold, +1.2 | "UPLOAD BATCH (12)" |
 | `numeric` | 11 SemiBold, **tabular figures** | "74%", "12 MB/s" |
 

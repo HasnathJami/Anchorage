@@ -204,6 +204,7 @@ rather than blocking mock locations. Match that standard.
 | Exposure compensation | Snapped to the sensor's EV grid in `ExposureRange` before anything reads it | Android rejects or silently rounds an off-grid value, and a drag produces one on nearly every frame. |
 | Room `onConflict` | **ABORT**, no destructive migration fallback | A duplicate check-in is a violation to report, not to overwrite; losing an attendance log to a schema bump is a data-integrity incident. |
 | Background scheduling inside the isolate | **Disabled** | Scheduling WorkManager work from inside a WorkManager task builds an accidental wake-up loop. |
+| Attempt budget | **3**, and only failures that are the task's own spend one | A park for want of a network or of bandwidth costs nothing, so the budget is only ever spent on the same failure repeating - and by the third of those the fourth will not be the one that works. `RetryPolicy.defaultMaxAttempts` is the single source of truth; `UploadTask.defaultMaxAttempts`, the SQLite column default and the `2/3` label all follow it. |
 | Upload concurrency | **Serial** | Parallel uploads on a weak link starve each other and blow up memory on large files. |
 | Notice ownership | The location stream may not overwrite a notice raised by a user action | Fixed a real bug where the "fix too coarse" banner was wiped a fraction of a second after appearing. |
 
@@ -229,7 +230,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **136 Android unit tests**, **277 Flutter tests**, plus 5 Compose instrumentation
+Current state: **136 Android unit tests**, **279 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

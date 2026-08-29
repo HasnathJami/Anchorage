@@ -18,8 +18,25 @@ class RetryPolicy extends Equatable {
     this.baseDelay = const Duration(seconds: 4),
     this.multiplier = 2.0,
     this.maxDelay = const Duration(minutes: 15),
-    this.maxAttempts = 5,
+    this.maxAttempts = defaultMaxAttempts,
   });
+
+  /// How many times a task may be *attempted* before it is given up on.
+  ///
+  /// Three, not five. The number only ever counts attempts that were the
+  /// task's own fault - a rejection from the server, a transport that broke
+  /// for a reason the radio cannot explain. Losing the network does not
+  /// consume one, and neither does a link too slow to carry the file: those
+  /// park the row and cost nothing, however long they last. So the budget is
+  /// spent only on failures that are *repeating for the same reason*, and by
+  /// the third of those the fourth is not going to be the one that works. It
+  /// is a better use of the user's battery and the server's patience to stop,
+  /// say so, and offer a manual retry.
+  ///
+  /// The single source of truth: [UploadTask.defaultMaxAttempts] and the queue
+  /// table's own column default both follow this, so a row's `2/3` label and
+  /// the engine's decision to stop can never disagree.
+  static const int defaultMaxAttempts = 3;
 
   final Duration baseDelay;
   final double multiplier;

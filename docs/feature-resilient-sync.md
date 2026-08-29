@@ -42,7 +42,7 @@ file.
 ### Rule 4 — Unretryable failures stop immediately
 
 A missing file or an HTTP 400 will never succeed. The task fails once and is surfaced with a
-manual retry control, rather than looped five times with exponential backoff.
+manual retry control, rather than looped with exponential backoff.
 
 ### Rule 5 — The queue is the source of truth throughout
 
@@ -205,7 +205,19 @@ The `Random` is injected, so the schedule is deterministic in tests. The tests a
 **ceiling** and, separately, on the **variance across seeds** — never on a sampled value,
 because pinning one output tests the seed rather than the policy.
 
-**Budget:** 5 attempts. `maxAttempts` is per-task, so a future large-file policy could differ.
+**Budget:** 3 attempts, from `RetryPolicy.defaultMaxAttempts`. `maxAttempts` is stored
+per-task, so a future large-file policy could differ, but the default is the single source of
+truth: `UploadTask.defaultMaxAttempts` and the queue table's own column default both follow
+it, and a v3 migration brought older rows into line. A row that says `2/3` and an engine that
+stops at three must be reading the same number.
+
+Three rather than five because of what the number *counts*. An attempt is only spent on a
+failure that was the task's own — a rejection from the server, a transport that broke for a
+reason the radio cannot explain. **Losing the network costs nothing, and neither does a link
+too slow to carry the file**: both park the row indefinitely without touching the counter. So
+the budget is only ever spent on failures repeating for the same reason, and by the third of
+those the fourth is not going to be the one that works. Stopping there, saying so, and
+offering a manual retry is a better use of the battery and of the server.
 
 ---
 
@@ -425,7 +437,7 @@ raised panel, `PENDING UPLOADS (n)` list, and a blue call to action pinned to th
 | `PAUSE ALL` / `RESUME ALL` | Holds every non-terminal task; automatic sweeps are suppressed while paused |
 | Active row | Lifted surface, blue hairline, inline progress bar, live throughput |
 | `WAITING FOR CONNECTION` | Amber |
-| `RETRYING... (ATTEMPT 3/5)` | Red |
+| `RETRYING... (ATTEMPT 3/3)` | Red |
 | `SYNCED` | Green with a check |
 | `FAILED` | Red, with per-row **retry** and **discard** controls |
 | `CLEAR SYNCED` | Housekeeping, appears only when there is something to clear |
@@ -472,7 +484,7 @@ honest way to test it.
 eligibility, byte-weighted batch progress, failure retryability.
 
 **`upload_widgets_test.dart`** — 8 widget tests: every status line in the reference's own
-words (`WAITING FOR CONNECTION`, `UPLOADING - 45%`, `RETRYING... (ATTEMPT 2/5)`, `SYNCED`),
+words (`WAITING FOR CONNECTION`, `UPLOADING - 45%`, `RETRYING... (ATTEMPT 2/3)`, `SYNCED`),
 the dimmed delivered row, the stem/extension split on the file name, the link chip's three
 states, and the progress header's percentage and pause control.
 

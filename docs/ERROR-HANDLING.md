@@ -176,8 +176,8 @@ Manager: a device with no camera can still review and upload what it already has
 | --- | --- | --- | --- | --- |
 | `NoConnectionFailure` | yes | **no** | `waitingForConnection` | `WAITING FOR CONNECTION` (amber) |
 | `LowBandwidthFailure` | yes | **no** | `waitingForConnection` | `WAITING FOR CONNECTION` (amber) |
-| `TimeoutFailure` | yes | yes | `retrying` | `RETRYING... (ATTEMPT 2/5)` (red) |
-| `ServerFailure(503)` | yes | yes | `retrying` | `RETRYING... (ATTEMPT 2/5)` (red) |
+| `TimeoutFailure` | yes | yes | `retrying` | `RETRYING... (ATTEMPT 2/3)` (red) |
+| `ServerFailure(503)` | yes | yes | `retrying` | `RETRYING... (ATTEMPT 2/3)` (red) |
 | `ServerFailure(400)` | **no** | yes | `failed` | `REJECTED BY SERVER` + retry/discard |
 | `MissingArtifactFailure` | **no** | yes | `failed` | `FILE NO LONGER ON DEVICE` + retry/discard |
 | Budget exhausted | — | — | `failed` | `FAILED` + retry/discard |

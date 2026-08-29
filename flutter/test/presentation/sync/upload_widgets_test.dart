@@ -51,7 +51,7 @@ void main() {
         tileFor(taskFixture(status: UploadStatus.retrying, attempt: 2)),
       );
 
-      expect(find.text('RETRYING... (ATTEMPT 2/5)'), findsOneWidget);
+      expect(find.text('RETRYING... (ATTEMPT 2/3)'), findsOneWidget);
     });
 
     testWidgets('a delivered row recedes but stays readable',

@@ -421,7 +421,7 @@ randomised policy.
 
 ## 19. Retryable and permanent failures are distinguished
 
-**Why:** retrying a 400 five times with exponential backoff is a battery drain that ends in
+**Why:** retrying a 400 to the end of its budget with exponential backoff is a battery drain that ends in
 the same failure. A queue entry pointing at a file the OS has deleted will never succeed no
 matter how long you wait.
 
@@ -530,7 +530,7 @@ Switching is one line in `injector.dart`.
 **Why:** a reviewer should be able to *see* the resilience, not take the README's word for it.
 
 **What Anchorage does:** two chips inside the camera's **⚙ settings sheet** switch what the
-mock *server* says. Tap **FAILED** and watch `RETRYING... (ATTEMPT 2/5)` climb with jittered
+mock *server* says. Tap **FAILED** and watch `RETRYING... (ATTEMPT 2/3)` climb with jittered
 backoff until the row lands at `FAILED` with a manual retry.
 
 The switcher used to carry **NO INTERNET** and **LOW BANDWIDTH** as well, and dropping them

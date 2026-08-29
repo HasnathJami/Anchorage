@@ -584,7 +584,7 @@ UploadTask taskFixture({
   int sizeBytes = 1024 * 1024,
   UploadStatus status = UploadStatus.queued,
   int attempt = 0,
-  int maxAttempts = 5,
+  int maxAttempts = UploadTask.defaultMaxAttempts,
   DateTime? createdAt,
   DateTime? nextAttemptAt,
   int bytesTransferred = 0,

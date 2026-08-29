@@ -42,7 +42,8 @@ class UploadQueueDatabase {
   static const String fileName = 'anchorage_harbor_queue.db';
 
   /// v2 added [UploadQueueColumns.claimedAt].
-  static const int schemaVersion = 2;
+  /// v3 lowered the attempt ceiling from five to three.
+  static const int schemaVersion = 3;
 
   final DatabaseFactory? _factory;
   final String? _directoryOverride;
@@ -118,6 +119,18 @@ class UploadQueueDatabase {
       await db.execute(
         'ALTER TABLE ${UploadQueueColumns.table} '
         'ADD COLUMN ${UploadQueueColumns.claimedAt} INTEGER',
+      );
+    }
+
+    if (from < 3) {
+      // The column default only applies to rows written after it changed, so
+      // without this a queue carried over from an older build would keep
+      // showing `ATTEMPT 2/5` while the engine - which reads the policy, not
+      // the row - stopped at three. The label and the behaviour have to agree.
+      await db.execute(
+        'UPDATE ${UploadQueueColumns.table} '
+        'SET ${UploadQueueColumns.maxAttempts} = ?',
+        <Object?>[UploadTask.defaultMaxAttempts],
       );
     }
   }

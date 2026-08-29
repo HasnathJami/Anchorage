@@ -50,6 +50,11 @@ void main() {
 
     test('the attempt budget is respected', () {
       const RetryPolicy budget = RetryPolicy(maxAttempts: 3);
+      expect(RetryPolicy.defaultMaxAttempts, 3,
+          reason: 'the shipping ceiling, and the number the rows label');
+      expect(UploadTask.defaultMaxAttempts, RetryPolicy.defaultMaxAttempts,
+          reason: 'a row that says 2/3 and an engine that stops at 3 have to '
+              'be reading the same constant');
 
       expect(budget.hasAttemptsLeft(2), isTrue);
       expect(budget.hasAttemptsLeft(3), isFalse);

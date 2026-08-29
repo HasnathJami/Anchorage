@@ -355,18 +355,56 @@ void main() {
       expect(report.valueOrNull!.scheduledForRetry, 1);
     });
 
-    test('exhausting the attempt budget fails the task permanently', () async {
+    test('the third failure for the same reason is the last one', () async {
+      // Three, not five. The budget is only ever spent on failures that are
+      // the task's own - a park for want of a network costs nothing - so by
+      // the third identical rejection the fourth is not going to be the one
+      // that works.
       uploader.script('task-1', <Failure?>[const ServerFailure(503)]);
       await repository.enqueueAll(<UploadTask>[
-        taskFixture(status: UploadStatus.retrying, attempt: 4),
+        taskFixture(
+          status: UploadStatus.retrying,
+          attempt: RetryPolicy.defaultMaxAttempts - 1,
+        ),
       ]);
 
       final report = await buildEngine()();
 
       final UploadTask task = repository.byId('task-1')!;
       expect(task.status, UploadStatus.failed);
-      expect(task.attempt, 5);
+      expect(task.attempt, RetryPolicy.defaultMaxAttempts);
       expect(report.valueOrNull!.permanentlyFailed, 1);
+    });
+
+    test('the second failure still schedules another go', () async {
+      uploader.script('task-1', <Failure?>[const ServerFailure(503)]);
+      await repository.enqueueAll(<UploadTask>[
+        taskFixture(
+          status: UploadStatus.retrying,
+          attempt: RetryPolicy.defaultMaxAttempts - 2,
+        ),
+      ]);
+
+      final report = await buildEngine()();
+
+      expect(repository.byId('task-1')!.status, UploadStatus.retrying);
+      expect(report.valueOrNull!.scheduledForRetry, 1);
+    });
+
+    test('parks do not eat into the budget, however many there are', () async {
+      // The rule the ceiling depends on. If a park spent an attempt, three
+      // would be far too few: a phone in and out of a tunnel would exhaust it
+      // without the server ever having been asked.
+      connectivity.quality = LinkQuality.offline;
+      await repository.enqueueAll(<UploadTask>[taskFixture()]);
+
+      for (int sweep = 0; sweep < 5; sweep++) {
+        await buildEngine()();
+      }
+
+      final UploadTask task = repository.byId('task-1')!;
+      expect(task.attempt, 0);
+      expect(task.status, UploadStatus.waitingForConnection);
     });
 
     test('succeed on a later attempt after transient failures', () async {

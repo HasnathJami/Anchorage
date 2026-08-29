@@ -1,3 +1,4 @@
+import 'package:anchorage_harbor/domain/entities/retry_policy.dart';
 import 'package:equatable/equatable.dart';
 
 /// Where a queued artefact is in its journey to the server.
@@ -83,7 +84,12 @@ class UploadTask extends Equatable {
     this.completedAt,
   });
 
-  static const int defaultMaxAttempts = 5;
+  /// Mirrors [RetryPolicy.defaultMaxAttempts] rather than restating it.
+  ///
+  /// These used to be two independent `5`s, which is a disagreement waiting to
+  /// happen: the engine decides when to stop from the policy, and the row's
+  /// `ATTEMPT 2/5` label is read from here.
+  static const int defaultMaxAttempts = RetryPolicy.defaultMaxAttempts;
 
   final String id;
   final String batchId;
