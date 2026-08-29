@@ -210,6 +210,14 @@ class _CameraPreviewPageState extends State<CameraPreviewPage>
           HarborToast.standard,
           null,
         ),
+
+      // Said once, then the gesture is retired - so it earns the longer dwell:
+      // it explains why a control the user just used has gone away.
+      CameraFocusUnavailableNotice() => (
+          'This camera cannot focus on a chosen point.',
+          HarborToast.standard,
+          null,
+        ),
       TorchTimedOutNotice() => (
           'The torch switched off to save battery.',
           HarborToast.brief,
@@ -300,7 +308,7 @@ class _PreviewSurface extends StatelessWidget {
               // under a moving thumb.
               onScaleEnd: (_) => bloc.add(const CameraZoomGestureEnded()),
               onTapUp: (TapUpDetails details) {
-                if (!state.isReady) return;
+                if (!state.isReady || !state.supportsTapToFocus) return;
 
                 final ({double x, double y}) point = crop.toSensor(
                   x: details.localPosition.dx / size.width,
@@ -336,7 +344,7 @@ class _PreviewSurface extends StatelessWidget {
             // child, and painted after it. The reticle now carries two
             // controls of its own, and nested inside the focus detector every
             // tap on the padlock would also register as "re-meter here".
-            if (state.focusPoint != null)
+            if (state.focusPoint != null && state.supportsTapToFocus)
               FocusReticle(
                 // Back out through the same crop, so the ring is drawn under
                 // the finger rather than where the sensor thinks it is.
@@ -544,14 +552,23 @@ class _ChromeOverlay extends StatelessWidget {
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: GlassCircleButton(
-                      icon: Icons.flip_camera_android_outlined,
-                      semanticLabel: state.isFrontFacing
-                          ? 'Switch to the rear camera'
-                          : 'Switch to the front camera',
-                      size: 44,
-                      onPressed: () => _flip(context, state),
-                    ),
+                    // Drawn only when this device has a camera facing the other
+                    // way. A phone with one camera - or a tablet with only a
+                    // front one - used to get a flip button that did nothing at
+                    // all when pressed, which is worse than no button: the user
+                    // cannot tell a broken app from a limited device. The
+                    // 44 dp box is still reserved so the shutter stays centred
+                    // on the screen rather than shifting when the button goes.
+                    child: state.canFlipCamera
+                        ? GlassCircleButton(
+                            icon: Icons.flip_camera_android_outlined,
+                            semanticLabel: state.isFrontFacing
+                                ? 'Switch to the rear camera'
+                                : 'Switch to the front camera',
+                            size: 44,
+                            onPressed: () => _flip(context, state),
+                          )
+                        : const SizedBox(width: 44, height: 44),
                   ),
                 ),
               ],

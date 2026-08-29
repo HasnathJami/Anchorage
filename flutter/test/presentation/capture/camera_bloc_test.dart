@@ -1,3 +1,4 @@
+import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
@@ -322,6 +323,100 @@ void main() {
         expect(bloc.state.notice, isA<CameraFlashUnavailableNotice>());
         // A missing LED is not a broken camera: the preview stays up.
         expect(bloc.state.phase, CameraPhase.ready);
+      },
+    );
+  });
+
+  group('hardware this device happens not to have', () {
+    // The app cannot ask a phone what it is capable of, only try and listen.
+    // Every case below is a real device shape, not a hypothetical.
+
+    blocTest<CameraBloc, CameraState>(
+      'a phone with one camera offers no flip',
+      // Cheap handsets, and a good few tablets and kiosks, ship exactly one.
+      // A flip button there does nothing when pressed, which is worse than no
+      // button: the user cannot tell a broken app from a limited device.
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        camera.session = sessionFor(
+          wideLens,
+          lenses: <CameraLens>[wideLens],
+        );
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.canFlipCamera, isFalse);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a device with only a front camera offers no flip either',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        camera.session = sessionFor(
+          frontLens,
+          lenses: <CameraLens>[frontLens],
+        );
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.canFlipCamera, isFalse);
+        expect(bloc.state.isFrontFacing, isTrue);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'an ordinary phone does offer it',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.canFlipCamera, isTrue);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a sensor that cannot meter on demand retires tap-to-focus',
+      // Fixed-focus modules and many front cameras have no controllable
+      // metering point. The plugin offers no way to ask, so the refusal is
+      // discovered by trying - and then remembered.
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        camera.focusResult =
+            const Result<void>.failure(MeteringUnavailableFailure());
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const CameraFocusRequested(x: 0.5, y: 0.5));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.supportsTapToFocus, isFalse);
+        expect(bloc.state.focusPoint, isNull,
+            reason: 'no reticle over a frame that ignored it');
+        expect(bloc.state.notice, isA<CameraFocusUnavailableNotice>());
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'and does not ask it again on every tap',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        camera.focusResult =
+            const Result<void>.failure(MeteringUnavailableFailure());
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        for (int tap = 0; tap < 3; tap++) {
+          bloc.add(const CameraFocusRequested(x: 0.5, y: 0.5));
+          await Future<void>.delayed(Duration.zero);
+        }
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.focusCalls.length, 1,
+            reason: 'the answer will not change while this sensor is open');
       },
     );
   });

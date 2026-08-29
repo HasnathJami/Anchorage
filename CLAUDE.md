@@ -225,6 +225,7 @@ rather than blocking mock locations. Match that standard.
 | Every `Image.file` carries a `cacheWidth` | `thumbnailCacheWidth(context, side)` | These files are camera captures. A 12 MP JPEG is ~48 MB of bitmap once decoded, whether it is painted full-screen or into a 54 dp square, and the Upload Manager draws one per row. A dozen frames was half a gigabyte of thumbnails: an OOM kill on a mid-range phone, and constant decode-and-evict churn - the app getting hot - on a good one. **Never add an `Image.file` without one.** |
 | The parked heartbeat backs off | 20 s, doubling to a 5 min ceiling | A captive portal reports a usable link and carries nothing, so the queue parks and keeps parking. A flat interval is three full sweeps a minute forever. Resets the moment anything syncs, the link returns, or a person opens the screen. |
 | `_open` catches **everything**, not just `CameraException` | The port's contract is that it never throws | Vendor camera code returns `PlatformException` and bare `StateError` too. `initialise` already caught broadly; a lens switch did not, so it could throw straight through the port. |
+| A control the hardware ignores is **not drawn** | No front camera, no flip button; no metering point, no reticle; no zoom, no slider | A button that does nothing when pressed is worse than no button - the user cannot tell a broken app from a limited device. The plugin cannot be *asked* what a device supports, so every capability is discovered by attempting it and translating the refusal into a typed failure. The flip button had been drawn unconditionally and silently did nothing on a one-camera phone. |
 | Upload concurrency | **Serial** | Parallel uploads on a weak link starve each other and blow up memory on large files. |
 | Notice ownership | The location stream may not overwrite a notice raised by a user action | Fixed a real bug where the "fix too coarse" banner was wiped a fraction of a second after appearing. |
 
@@ -250,7 +251,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **147 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
+Current state: **147 Android unit tests**, **326 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

@@ -67,6 +67,14 @@ final class CameraFlashUnavailableNotice extends CameraNotice {
   const CameraFlashUnavailableNotice();
 }
 
+/// This sensor has no controllable focus or metering point.
+///
+/// Said once, when the hardware first refuses. The reticle is then retired
+/// rather than drawn over a camera that ignores where it is put.
+final class CameraFocusUnavailableNotice extends CameraNotice {
+  const CameraFocusUnavailableNotice();
+}
+
 /// The torch switched itself off after its idle deadline.
 ///
 /// Announced rather than done silently: a light going out on its own is
@@ -91,6 +99,7 @@ class CameraState extends Equatable {
     this.batch,
     this.focusPoint,
     this.isMeteringLocked = false,
+    this.supportsTapToFocus = true,
     this.isSwitchingLens = false,
     this.exposureOffset = 0,
     this.flashMode = CaptureFlashMode.off,
@@ -118,6 +127,31 @@ class CameraState extends Equatable {
   /// Belongs beside [focusPoint] rather than on the session: a lock is about a
   /// point on a frame, and both die when the sensor is released.
   final bool isMeteringLocked;
+
+  /// False once the open sensor has told us it cannot meter where it is asked.
+  ///
+  /// Optimistic by default: there is no way to ask a camera whether it has a
+  /// controllable focus point, only to try. The first refusal is remembered so
+  /// the reticle stops being drawn over a sensor that ignores it.
+  final bool supportsTapToFocus;
+
+  /// Whether this device has a camera pointing the other way.
+  ///
+  /// Some phones ship one camera and some tablets and kiosks only a front one.
+  /// A flip button on those is a control that does nothing when pressed, which
+  /// is worse than no button at all - the same rule the zoom slider follows on
+  /// a sensor that cannot zoom.
+  bool get canFlipCamera {
+    final CameraLens? active = session?.activeLens;
+    if (active == null) return false;
+
+    final bool wantsFront = active.kind != CameraLensKind.front;
+    return lenses.any(
+      (CameraLens lens) => wantsFront
+          ? lens.kind == CameraLensKind.front
+          : lens.kind != CameraLensKind.front,
+    );
+  }
 
   /// A rear camera is being handed over to another one.
   ///
@@ -223,6 +257,7 @@ class CameraState extends Equatable {
     FocusPoint? focusPoint,
     bool clearFocusPoint = false,
     bool? isMeteringLocked,
+    bool? supportsTapToFocus,
     bool? isSwitchingLens,
     double? exposureOffset,
     CaptureFlashMode? flashMode,
@@ -240,6 +275,7 @@ class CameraState extends Equatable {
       batch: batch ?? this.batch,
       focusPoint: clearFocusPoint ? null : (focusPoint ?? this.focusPoint),
       isMeteringLocked: isMeteringLocked ?? this.isMeteringLocked,
+      supportsTapToFocus: supportsTapToFocus ?? this.supportsTapToFocus,
       isSwitchingLens: isSwitchingLens ?? this.isSwitchingLens,
       exposureOffset: exposureOffset ?? this.exposureOffset,
       flashMode: flashMode ?? this.flashMode,
@@ -260,6 +296,7 @@ class CameraState extends Equatable {
         batch,
         focusPoint,
         isMeteringLocked,
+        supportsTapToFocus,
         isSwitchingLens,
         exposureOffset,
         flashMode,

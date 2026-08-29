@@ -94,6 +94,18 @@ final class FlashUnavailableFailure extends Failure {
   const FlashUnavailableFailure({super.cause});
 }
 
+/// The sensor will not meter where it was told to.
+///
+/// A distinct case from "the camera is unwell", because the remedy is
+/// different and permanent: plenty of cheap modules and many front cameras
+/// have no controllable focus or metering point at all. Discovered the same
+/// way a missing flash is - by attempting it and translating the platform's
+/// refusal - because the plugin offers no way to ask. The screen retires
+/// tap-to-focus rather than reporting the same refusal on every tap.
+final class MeteringUnavailableFailure extends Failure {
+  const MeteringUnavailableFailure({super.cause});
+}
+
 // ------------------------------------------------------------------- storage
 
 /// Local database or file-system write failed.
@@ -184,6 +196,8 @@ extension FailureRetryability on Failure {
         CameraUnavailableFailure() => false,
         CameraOperationFailure() => false,
         CameraInterruptedFailure() => false,
+        // Retrying will not give a fixed-focus module a metering point.
+        MeteringUnavailableFailure() => false,
         // Retrying will not fit an LED to a sensor that shipped without one.
         FlashUnavailableFailure() => false,
         UnexpectedFailure() => false,

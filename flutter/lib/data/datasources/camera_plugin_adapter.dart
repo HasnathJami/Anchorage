@@ -244,10 +244,21 @@ class CameraPluginAdapter implements CameraPort {
         await controller.setExposurePoint(offset);
         await controller.setFocusPoint(offset);
       },
+      // A sensor with no controllable metering point reports it here, and it
+      // is not the same fact as "the camera is unwell": it will never work on
+      // this hardware, so the screen stops offering the gesture instead of
+      // apologising for it on every tap.
       onError: (Object error, StackTrace stackTrace) =>
-          CameraOperationFailure('focusAt', cause: error),
+          error is CameraException && _isMeteringUnsupported(error.code)
+              ? MeteringUnavailableFailure(cause: error)
+              : CameraOperationFailure('focusAt', cause: error),
     );
   }
+
+  static bool _isMeteringUnsupported(String code) =>
+      code == 'setFocusPointFailed' ||
+      code == 'setExposurePointFailed' ||
+      code == 'setFocusModeFailed';
 
   @override
   Future<Result<void>> setMeteringLocked(bool locked) async {
@@ -448,6 +459,13 @@ class CameraPluginAdapter implements CameraPort {
         PermissionRestrictedFailure(AppPermission.camera, cause: error),
       'cameraNotFound' || 'CameraNotFound' =>
         CameraUnavailableFailure(cause: error),
+      // Not every sensor has a controllable focus or metering point - fixed
+      // focus modules and many front cameras simply do not. That is a property
+      // of the hardware, not a fault, so it gets its own case.
+      'setFocusPointFailed' ||
+      'setExposurePointFailed' ||
+      'setFocusModeFailed' =>
+        MeteringUnavailableFailure(cause: error),
       _ => CameraOperationFailure(operation, cause: error),
     };
   }

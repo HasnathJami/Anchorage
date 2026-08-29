@@ -572,6 +572,36 @@ actually holds, the reference design's most recognisable control rendered as emp
 Opening this screen re-arms every recoverable failure and sweeps, so a queue that gave up
 while the cause was being fixed does not need a row-by-row retry.
 
+### Hardware this device happens not to have
+
+The brief asks for *"graceful handling of permissions and hardware failures"*, and on Android
+that is not one problem but a long tail of them: phones with a single camera, tablets with only
+a front one, fixed-focus modules, sensors with no flash, sensors that cannot zoom. **The
+`camera` plugin offers no way to *ask* a device what it can do** — only to try and listen. So
+every capability here is discovered by attempting it and translating the platform's refusal
+into a typed failure, and the rule is always the same:
+
+> **A control the hardware ignores is not drawn.** A button that does nothing when pressed is
+> worse than no button, because the user cannot tell a broken app from a limited device.
+
+| Hardware | What the app does |
+| --- | --- |
+| **No camera at all** | `CameraUnavailableFailure` → a full-screen explanation that also offers `OPEN UPLOAD MANAGER`, because a queue captured earlier is still worth delivering. The app stays useful rather than dead-ending |
+| **No front camera** (one-camera phones, some tablets) | The flip button is **not rendered**. Its 44 dp box is still reserved so the shutter stays centred rather than shifting. Previously the button was always drawn and tapping it silently did nothing |
+| **Only a front camera** (kiosks, some tablets) | Opens on it; the flip button is likewise not drawn |
+| **No flash** | The mode is attempted, `setFlashModeFailed` becomes `FlashUnavailableFailure`, the app falls back to off and says *"This camera has no flash"* — once, not on every press |
+| **No controllable focus / metering point** (fixed-focus modules, many front cameras) | `MeteringUnavailableFailure`. Tap-to-focus is **retired for that sensor**: the reticle is cleared, the gesture stops being offered, and the reason is said once rather than on every tap |
+| **Cannot zoom** | `ZoomRange.fixed` → no slider, and the quick-zoom row collapses to the one stop that is real |
+| **No exposure compensation** | `ExposureRange.fixed` → the brightness slider is not drawn |
+| **Camera taken away mid-session** (a call, another app, policy) | `CameraInterruptedFailure`; the preview is reopened on resume, and the flash mode the user chose is re-applied to the new controller |
+| **Vendor code that throws something unexpected** | `_open` catches `Throwable`, not only `CameraException` — `PlatformException` and bare `StateError` both come back from real hardware, and this class's contract is that it never throws |
+| **A capture that never returns** | `takePicture` is bounded by a 20-second timeout. A wedged camera service does not return an error, it simply never answers — and the Bloc holds `isCapturing` until it does, which turns a hang into a shutter that is dead for the rest of the session |
+
+Two of these were found by writing this section rather than by a crash report: the flip button
+on a single-camera device, and the metering refusal. Both now have tests that stand in for the
+device shape — a fake reporting one lens, and a sensor that refuses to meter — because that is
+the only way to cover hardware nobody on the team owns.
+
 ### The sync engine in six rules
 
 `ProcessUploadQueue` is the heart of the app. Every rule below has a test that fails if the
@@ -912,15 +942,15 @@ over pure domain code, with fakes standing in for hardware.
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/` | 58 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
-| `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **468** | |
+| `flutter` | 326 | Camera Bloc (60), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
+| **Total** | **473** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
 cd android  && ./gradlew testDebugUnitTest   # 147 tests
-cd ../flutter && flutter test        # 321 tests
+cd ../flutter && flutter test        # 326 tests
 ```
 
 Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.
@@ -1047,9 +1077,13 @@ it.
 | --- | --- | --- |
 | <img src="docs/screenshots/harbor-1-camera.png" width="240" /> | <img src="docs/screenshots/harbor-2-focus-reticle.png" width="240" /> | <img src="docs/screenshots/harbor-3-capture-settings.png" width="240" /> |
 
-| 4. The batch | 5. Handed over | 6. Delivered | 7. Rejected |
-| --- | --- | --- | --- |
-| <img src="docs/screenshots/harbor-4-batch-review.png" width="185" /> | <img src="docs/screenshots/harbor-5-handoff-toast.png" width="185" /> | <img src="docs/screenshots/harbor-6-upload-manager.png" width="185" /> | <img src="docs/screenshots/harbor-7-rejected.png" width="185" /> |
+| 4. The batch | 5. Handed over | 6. Delivered |
+| --- | --- | --- |
+| <img src="docs/screenshots/harbor-4-batch-review.png" width="240" /> | <img src="docs/screenshots/harbor-5-handoff-toast.png" width="240" /> | <img src="docs/screenshots/harbor-6-upload-manager.png" width="240" /> |
+
+| 7. Rejected by the server | 8. Offline — nothing lost | 9. Network back — nothing pressed |
+| --- | --- | --- |
+| <img src="docs/screenshots/harbor-7-rejected.png" width="240" /> | <img src="docs/screenshots/harbor-8-no-network.png" width="240" /> | <img src="docs/screenshots/harbor-9-auto-resumed.png" width="240" /> |
 
 **How the flow reads, step by step.**
 
@@ -1086,53 +1120,44 @@ it.
 
 7. **Rejected.** With the mock set to `FAILED`, a row climbs through jittered backoff and
    lands on `REJECTED BY SERVER` with per-row retry and discard. It is a **retryable 500**, so
-   `RetryPolicy` — not the mock — decides when to stop, after three attempts. Attempts are
-   only ever spent on the server's own failures: losing the network parks a row indefinitely
-   without touching the counter. Re-opening this screen re-arms everything recoverable and
-   sweeps, which is why steps 6 and 7 needed no button press to get moving.
+   `RetryPolicy` — not the mock — decides when to stop, after three attempts. Re-opening this
+   screen re-arms everything recoverable and sweeps, which is why captures 6 and 7 needed no
+   button press to get moving.
 
----
+8. **Offline — and nothing is lost.** The device is *genuinely* offline here: Wi-Fi and mobile
+   data switched off via `adb`, not simulated in code, and the mock server left on `SUCCESS`
+   so the **only** thing wrong is the network. The link chip turns red and reads `NO LINK`,
+   the header drops to `78%`, and the two frames captured while offline sit in amber at
+   **`WAITING FOR CONNECTION`**. Nothing has failed, and — the detail that matters — **no
+   retry attempt has been spent**. A missing network is not the task's fault, so the counter
+   is untouched: a row can wait offline for a day and still have its full budget when the
+   signal returns.
 
-#### What the brief actually asks for: losing the network
+9. **Network back, and nothing was pressed.** The same two rows, now `SYNCED`. The radios were
+   switched on and *nothing else happened* — the app was not reopened, no button was touched,
+   the screen was not even scrolled. The two filenames are identical across captures 8 and 9
+   (`…875495` and `…878605`), which is what makes it the same rows rather than a fresh batch.
+
+Captures 8 and 9 together are the brief's third bullet, demonstrated rather than asserted:
 
 > *"If the API call fails due to **low bandwidth** or **no internet**, the images must remain
 > in the local queue. Automatically retry the upload once a stable connection is detected
 > **without user intervention**."*
 
-That is the requirement the whole engine exists for, so here it is happening, with the mock
-server set to `SUCCESS` — the **only** thing wrong is the network.
-
-| 8. Offline — nothing is lost | 9. Network back — nothing was pressed |
-| --- | --- |
-| <img src="docs/screenshots/harbor-8-no-network.png" width="260" /> | <img src="docs/screenshots/harbor-9-auto-resumed.png" width="260" /> |
-
-**Capture 8 — the device is genuinely offline** (Wi-Fi and mobile data disabled via `adb`, not
-simulated in code). The link chip turns red and reads `NO LINK`, the header drops to `78%`, and
-the two frames captured while offline sit in amber at **`WAITING FOR CONNECTION`**. Nothing is
-lost, nothing has failed, and — the detail that matters — **no retry attempt has been spent**.
-A missing network is not the task's fault, so the attempt counter is untouched: the row can
-wait offline for a day and still have its full budget when the signal returns.
-
-**Capture 9 — the same two rows, `SYNCED`.** The network was switched back on and *nothing else
-happened*: the app was not reopened, no button was pressed, the screen was not even scrolled.
 `ConnectivityMonitor` saw the link return, held it for a three-second settle window before
-trusting it, and the queue drained itself. The two filenames are identical across both
-captures (`…875495` and `…878605`), which is what makes it the same rows rather than a fresh
-batch.
-
-The settle window is why the chip has **three** states rather than two. Android reports a link
-the instant it associates — often seconds before it can carry a byte — so a naive
-`isConnected` listener starts an upload straight into a failure and burns an attempt every
-time. `NO LINK` → *unstable* → `STABLE LINK` is the difference between a queue that resumes
-and one that thrashes.
+trusting it, and the queue drained itself. That settle window is why the chip has **three**
+states rather than two: Android reports a link the instant it associates, often seconds
+before it can carry a byte, so a naive `isConnected` listener starts an upload straight into
+a failure and burns an attempt every time. `NO LINK` → *unstable* → `STABLE LINK` is the
+difference between a queue that resumes and one that thrashes.
 
 **Low bandwidth reaches the same state by a different road.** It is not pictured because a
 genuinely slow link cannot be conjured on a physical device the way airplane mode can, but the
 path is the one the tests cover: throughput is **measured** from the bytes actually moving,
 and if it stays under `BandwidthPolicy.floorBytesPerSecond` for six *continuous* seconds the
-transfer is abandoned and the row parked exactly as above — `WAITING FOR CONNECTION`, no
-attempt spent. The operating system will tell you there is a transport; it will never tell you
-it is useless, which is why that judgement is measured rather than asked for.
+transfer is abandoned and the row parked exactly as in capture 8 — `WAITING FOR CONNECTION`,
+no attempt spent. The operating system will tell you there is a transport; it will never tell
+you it is useless, which is why that judgement is measured rather than asked for.
 
 Once parked, four independent things can restart a row: the link becoming stable, a backoff
 elapsing, a heartbeat that backs off from 20 s to a 5-minute ceiling while nothing gets

@@ -592,7 +592,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     CameraFocusRequested event,
     Emitter<CameraState> emit,
   ) async {
-    if (!state.isReady) return;
+    // A sensor that has already told us it cannot meter on demand is not asked
+    // again. Every tap would otherwise raise the same notice about a fact that
+    // will not change while this camera is open.
+    if (!state.isReady || !state.supportsTapToFocus) return;
 
     final FocusPoint point = FocusPoint(
       x: event.x.clamp(0.0, 1.0),
@@ -623,6 +626,22 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
     final Result<void> result = await _camera.focusAt(point);
     final Failure? failure = result.failureOrNull;
+
+    // Hardware that cannot meter where it is told: retire the gesture rather
+    // than leave a reticle sitting over a frame that never responded to it.
+    if (failure is MeteringUnavailableFailure) {
+      emit(
+        state.copyWith(
+          supportsTapToFocus: false,
+          clearFocusPoint: true,
+          isMeteringLocked: false,
+          exposureOffset: 0,
+          notice: const CameraFocusUnavailableNotice(),
+        ),
+      );
+      return;
+    }
+
     if (failure != null && failure is! CameraOperationFailure) {
       emit(_failureState(failure));
     }

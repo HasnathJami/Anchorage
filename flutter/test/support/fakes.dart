@@ -445,6 +445,16 @@ const CameraLens wideLens = CameraLens(
   kind: CameraLensKind.wide,
 );
 
+/// The selfie camera. Present on the default fake device because almost every
+/// phone has one - the *absence* of it is the interesting case, so tests that
+/// care about a single-camera device pass an explicit [lenses] list.
+const CameraLens frontLens = CameraLens(
+  id: 'front-0',
+  zoomFactor: 1,
+  label: 'Front',
+  kind: CameraLensKind.front,
+);
+
 const CameraLens ultraWideLens = CameraLens(
   id: 'back-1',
   zoomFactor: 0.5,
@@ -469,7 +479,7 @@ CameraSession sessionFor(
       // Two rear cameras by default - the awkward shape, where the quick-zoom
       // row has to reach past the open sensor. Pass [lenses] for a device that
       // publishes a single logical rear camera.
-      availableLenses: lenses ?? <CameraLens>[ultraWideLens, wideLens],
+      availableLenses: lenses ?? <CameraLens>[ultraWideLens, wideLens, frontLens],
       activeLens: lens,
       previewKey: previewKey,
     );
@@ -541,8 +551,14 @@ class FakeCamera implements CameraPort {
   @override
   Future<Result<void>> focusAt(FocusPoint point) async {
     focusCalls.add(point);
-    return const Result<void>.success(null);
+    return focusResult;
   }
+
+  /// What the sensor says when asked to meter at a point.
+  ///
+  /// Overridden to a [MeteringUnavailableFailure] by tests standing in for a
+  /// fixed-focus module, which has no controllable metering point at all.
+  Result<void> focusResult = const Result<void>.success(null);
 
   /// Every lock state the Bloc has pushed at the hardware, in order.
   final List<bool> lockCalls = <bool>[];
