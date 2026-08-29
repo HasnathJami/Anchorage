@@ -9,14 +9,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -31,12 +35,13 @@ import com.anchorage.perimeter.domain.geo.WebMercator
 import com.anchorage.perimeter.domain.geo.WorldPixel
 import com.anchorage.perimeter.domain.model.GeoPoint
 import com.anchorage.perimeter.domain.model.TileCoordinate
-import kotlin.math.ln
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.log2
 import kotlin.math.roundToInt
 
 /**
- * The slippy map: tiles, the fixed centre crosshair, the perimeter ring and
- * the user's own position.
+ * The slippy map: tiles, the dropped centre pin, and the user's own position.
  *
  * All of the projection arithmetic lives in [WebMercator] rather than here, so
  * the part that is easy to get subtly wrong is covered by JVM tests while this
@@ -57,8 +62,6 @@ fun MapCanvas(
     centre: GeoPoint,
     zoom: Int,
     userLocation: GeoPoint?,
-    radiusMeters: Double,
-    isUserInsidePerimeter: Boolean?,
     tiles: Map<TileCoordinate, ByteArray>,
     onCentreMoved: (GeoPoint) -> Unit,
     onZoomChanged: (Int) -> Unit,
@@ -74,13 +77,27 @@ fun MapCanvas(
 
     var viewport by remember { mutableStateOf(IntSize.Zero) }
 
-    // Decoding is memoised across recompositions: a pan gesture recomposes on
-    // every frame, and re-decoding a dozen PNGs per frame would drop the map
-    // to a slideshow.
-    val decoded = remember { mutableMapOf<TileCoordinate, ImageBitmap?>() }
+    /**
+     * Decoded tiles, filled off the main thread.
+     *
+     * `BitmapFactory.decodeByteArray` used to run inside the draw pass, which
+     * meant the first frame showing a new row of tiles spent tens of
+     * milliseconds decoding PNGs before it could draw anything - a dropped
+     * frame every time the user panned onto fresh imagery. Decoding here and
+     * drawing only what is already decoded keeps the draw pass to blits.
+     */
+    val decoded = remember { mutableStateMapOf<TileCoordinate, ImageBitmap>() }
 
     val currentCentre by rememberUpdatedState(centre)
     val currentZoom by rememberUpdatedState(zoom)
+
+    // Where the pinch has got to *between* integer levels. Re-synced whenever
+    // the zoom changes from outside a gesture - the +/- buttons, or the office
+    // the screen opened on - so the next pinch starts from what is on screen.
+    val pinchZoom = remember { mutableFloatStateOf(zoom.toFloat()) }
+    LaunchedEffect(zoom) {
+        if (pinchZoom.floatValue.roundToInt() != zoom) pinchZoom.floatValue = zoom.toFloat()
+    }
 
     // The world pixel under the top-left corner of the viewport.
     val centreWorld = WebMercator.toWorldPixel(centre, zoom)
@@ -89,9 +106,37 @@ fun MapCanvas(
         y = centreWorld.y - (viewport.height / 2.0) / pixelScale,
     )
 
-    LaunchedEffect(centre, zoom, viewport) {
+    LaunchedEffect(tiles) {
+        // Whatever left `tiles` is gone for good; holding its bitmap is the
+        // difference between a bounded cache and a slow leak.
+        decoded.keys.retainAll(tiles.keys)
+
+        val fresh = tiles.filterKeys { it !in decoded }
+        if (fresh.isEmpty()) return@LaunchedEffect
+
+        val bitmaps = withContext(Dispatchers.Default) {
+            fresh.mapNotNull { (coordinate, bytes) ->
+                // decodeByteArray returns null rather than throwing on
+                // malformed data, and the `runCatching` covers the rest:
+                // corrupt imagery must not take down a screen the user is
+                // standing outside trying to use.
+                runCatching {
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                }.getOrNull()?.let { coordinate to it }
+            }
+        }
+        decoded.putAll(bitmaps)
+    }
+
+    // Recomputed every frame - it is a dozen integer divisions - but the
+    // effect below only relaunches when the *set* changes. Keying on `centre`
+    // instead meant a fresh coroutine, a fresh tile list and a round trip
+    // through the ViewModel on every frame of every drag.
+    val visible = visibleTiles(topLeft, viewport, pixelScale, zoom)
+
+    LaunchedEffect(visible) {
         if (viewport == IntSize.Zero) return@LaunchedEffect
-        onTilesRequested(visibleTiles(topLeft, viewport, pixelScale, zoom))
+        onTilesRequested(visible)
     }
 
     Box(
@@ -117,50 +162,40 @@ fun MapCanvas(
                     }
 
                     if (gestureZoom != 1f) {
-                        // Zoom levels are integers; a pinch only steps once it
-                        // has travelled a full doubling, so the map does not
-                        // flicker between levels mid-gesture.
-                        val steps = (ln(gestureZoom.toDouble()) / ln(2.0)).let {
-                            if (it > ZOOM_STEP_THRESHOLD) 1
-                            else if (it < -ZOOM_STEP_THRESHOLD) -1
-                            else 0
-                        }
-                        if (steps != 0) {
-                            onZoomChanged((currentZoom + steps).coerceIn(minZoom, maxZoom))
-                        }
+                        // `gestureZoom` is the scale change since the *last
+                        // pointer event*, not since the pinch began. The old
+                        // code compared that single-frame delta against a
+                        // threshold of 1.27x, which one 16 ms frame of a human
+                        // pinch never reaches - so pinching did nothing at all.
+                        //
+                        // Accumulating into a fractional zoom level fixes it
+                        // and is self-correcting: it is an absolute position,
+                        // so it cannot drift the way a running delta does, and
+                        // rounding puts the step at the natural halfway point.
+                        pinchZoom.floatValue = (pinchZoom.floatValue + log2(gestureZoom))
+                            .coerceIn(minZoom.toFloat(), maxZoom.toFloat())
+
+                        val stepped = pinchZoom.floatValue.roundToInt()
+                        if (stepped != currentZoom) onZoomChanged(stepped)
                     }
                 }
             },
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            drawTiles(tiles, decoded, topLeft, pixelScale, zoom, tileDisplayPx)
+            drawTiles(decoded, topLeft, pixelScale, zoom, tileDisplayPx)
 
-            val metresPerPixel = WebMercator.metresPerPixel(centre.latitude, zoom) / pixelScale
-            val radiusPx = (radiusMeters / metresPerPixel).toFloat()
             val centrePx = Offset(size.width / 2f, size.height / 2f)
-
-            // The perimeter, in the same three states the Attendance dial uses:
-            // green inside, red outside, and a neutral blue when the user's
-            // own position is unknown - because claiming either colour without
-            // knowing where they are would be inventing a fact.
-            val ringColor = when (isUserInsidePerimeter) {
-                true -> colors.successArc
-                false -> colors.dangerArc
-                null -> colors.primary
-            }
-            drawCircle(color = ringColor.copy(alpha = 0.14f), radius = radiusPx, center = centrePx)
-            drawCircle(
-                color = ringColor,
-                radius = radiusPx,
-                center = centrePx,
-                style = Stroke(width = with(density) { 2.dp.toPx() }),
-            )
 
             userLocation?.let { user ->
                 drawUserDot(user, topLeft, pixelScale, zoom, colors.primary, density.density)
             }
 
-            drawCrosshair(centrePx, ringColor, density.density)
+            // No perimeter ring. Drawing the 50 m radius here made the picker
+            // look like it was measuring something, and it is not: it records
+            // a coordinate. The radius is real, but it belongs on the screen
+            // where it decides an outcome - the Attendance dial - not around a
+            // pin the user is still dragging.
+            drawLocationPin(centrePx, colors.mapMarker, density.density)
         }
     }
 }
@@ -189,9 +224,13 @@ private fun visibleTiles(
     }
 }
 
+/**
+ * Blits whatever is already decoded. A tile that has arrived but not yet been
+ * decoded is simply skipped this frame; the grid shows through for one frame
+ * instead of the frame being spent decoding it.
+ */
 private fun DrawScope.drawTiles(
-    tiles: Map<TileCoordinate, ByteArray>,
-    decoded: MutableMap<TileCoordinate, ImageBitmap?>,
+    decoded: Map<TileCoordinate, ImageBitmap>,
     topLeft: WorldPixel,
     pixelScale: Float,
     zoom: Int,
@@ -205,14 +244,7 @@ private fun DrawScope.drawTiles(
     for (y in first.y..last.y) {
         for (x in first.x..last.x) {
             val coordinate = TileCoordinate(x, y, zoom)
-            val bytes = tiles[coordinate.wrapped()] ?: continue
-            val image = decoded.getOrPut(coordinate.wrapped()) {
-                // decodeByteArray returns null rather than throwing on
-                // malformed data, and the `runCatching` covers the rest.
-                runCatching {
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                }.getOrNull()
-            } ?: continue
+            val image = decoded[coordinate.wrapped()] ?: continue
 
             val left = ((x * WebMercator.TILE_SIZE - topLeft.x) * pixelScale).toFloat()
             val top = ((y * WebMercator.TILE_SIZE - topLeft.y) * pixelScale).toFloat()
@@ -253,30 +285,49 @@ private fun DrawScope.drawUserDot(
 }
 
 /**
- * The fixed centre marker.
+ * The dropped pin at the exact centre of the viewport.
  *
- * A crosshair rather than a teardrop pin, and deliberately: a pin's *point* is
- * at its bottom tip while its bulk sits above, so users consistently read the
- * wrong pixel as the chosen spot. Crossed lines have no such ambiguity.
+ * This was a crosshair, on the reasoning that a teardrop's bulk sits above its
+ * point and users therefore read the wrong pixel as the chosen spot. The
+ * objection is real; the answer is the [shadow] rather than a different shape.
+ * A crosshair is a *targeting* symbol - it says "aim here", which invites the
+ * reading that the app is measuring whether the aim is good enough. It is not:
+ * the office goes wherever it is dropped, and the only measurement that
+ * matters happens later, at check-in. A pin says "placed", which is the truth.
+ *
+ * [tip] is the coordinate being chosen; everything is drawn above it.
  */
-private fun DrawScope.drawCrosshair(centre: Offset, color: Color, density: Float) {
-    val arm = 14f * density
-    val gap = 5f * density
-    val stroke = 2f * density
+private fun DrawScope.drawLocationPin(tip: Offset, color: Color, density: Float) {
+    val headRadius = 11f * density
+    val height = 34f * density
+    val head = Offset(tip.x, tip.y - height + headRadius)
 
-    listOf(
-        Offset(centre.x - arm, centre.y) to Offset(centre.x - gap, centre.y),
-        Offset(centre.x + gap, centre.y) to Offset(centre.x + arm, centre.y),
-        Offset(centre.x, centre.y - arm) to Offset(centre.x, centre.y - gap),
-        Offset(centre.x, centre.y + gap) to Offset(centre.x, centre.y + arm),
-    ).forEach { (start, end) ->
-        drawLine(color = Color.White, start = start, end = end, strokeWidth = stroke * 2f)
-        drawLine(color = color, start = start, end = end, strokeWidth = stroke)
+    // The shadow, and the whole answer to "which pixel is it?" - it sits on
+    // the chosen coordinate itself, so the pin reads as standing on a spot
+    // rather than floating over a neighbourhood.
+    drawOval(
+        color = Color.Black.copy(alpha = 0.20f),
+        topLeft = Offset(tip.x - 5f * density, tip.y - 2f * density),
+        size = Size(width = 10f * density, height = 4f * density),
+    )
+
+    // A tapered body whose apex is the tip; the head circle rounds off its top
+    // into a teardrop.
+    val body = Path().apply {
+        moveTo(tip.x, tip.y)
+        lineTo(head.x - headRadius * 0.87f, head.y + headRadius * 0.5f)
+        lineTo(head.x + headRadius * 0.87f, head.y + headRadius * 0.5f)
+        close()
     }
 
-    drawCircle(color = Color.White, radius = 4.5f * density, center = centre)
-    drawCircle(color = color, radius = 3f * density, center = centre)
+    // White underneath, as a halo. Map tiles run from near-white motorways to
+    // dark parkland, and a red marker on either alone would disappear into it.
+    drawPath(path = body, color = Color.White, style = Stroke(width = 3f * density))
+    drawCircle(color = Color.White, radius = headRadius + 1.5f * density, center = head)
+
+    drawPath(path = body, color = color)
+    drawCircle(color = color, radius = headRadius, center = head)
+    drawCircle(color = Color.White, radius = headRadius * 0.42f, center = head)
 }
 
 private const val TILE_DISPLAY_DP = 256
-private const val ZOOM_STEP_THRESHOLD = 0.34

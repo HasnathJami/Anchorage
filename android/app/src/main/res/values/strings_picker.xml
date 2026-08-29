@@ -2,17 +2,13 @@
 <resources>
     <string name="picker_title">Set Office Location</string>
     <string name="picker_find_me">Centre on my location</string>
+    <string name="picker_zoom_in">Zoom in</string>
+    <string name="picker_zoom_out">Zoom out</string>
     <string name="picker_confirm_set">Set This Location</string>
     <string name="picker_confirm_update">Update Office Location</string>
     <string name="picker_dismiss">Not now</string>
 
     <string name="picker_map_offline_chip">Map imagery unavailable — offline</string>
-
-    <!-- Distance read-out under the map. The perimeter's colour is never the
-         only carrier of this state. -->
-    <string name="picker_distance_unknown">Your position is unknown, so the perimeter is shown in neutral. Use “Centre on my location” to check it.</string>
-    <string name="picker_distance_inside">You are %1$s from this point — inside the %2$d m perimeter.</string>
-    <string name="picker_distance_outside">You are %1$s from this point — outside the %2$d m perimeter.</string>
 
     <string name="picker_message_saved">Office location updated.</string>
     <string name="picker_message_nothing_to_save">Move the map to choose a spot first.</string>

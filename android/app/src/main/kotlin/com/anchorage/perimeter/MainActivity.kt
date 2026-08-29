@@ -26,7 +26,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AnchorageTheme {
-                AnchorageNavHost()
+                // `finishAffinity` rather than `finish`: the user asked to
+                // leave the app, not to pop one screen off it. With a single
+                // Activity the two happen to coincide today, and naming the
+                // intent keeps that true if a second one is ever added.
+                AnchorageNavHost(onExitApp = ::finishAffinity)
             }
         }
     }

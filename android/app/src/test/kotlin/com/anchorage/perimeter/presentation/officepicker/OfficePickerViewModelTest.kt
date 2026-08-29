@@ -121,8 +121,133 @@ class OfficePickerViewModelTest {
 
             assertThat(viewModel.uiState.value.centre).isEqualTo(office)
             assertThat(viewModel.uiState.value.hasExistingAnchor).isTrue()
-            assertThat(tracker.currentFixCallCount).isEqualTo(0)
+            // The fix is still taken - the ring needs it - but it lands in the
+            // read-out, not in the camera. Asserting "no fix at all" would
+            // have locked in a picker that can never colour its own perimeter.
+            assertThat(viewModel.uiState.value.userLocation).isEqualTo(DHAKA_OFFICE)
         }
+
+    @Test
+    fun `an existing office plots the user's dot without moving the map`() = runTest(dispatcher) {
+        // Both halves matter. The blue "you are here" dot cannot be drawn
+        // without a fix, and taking that fix must not cost the user the office
+        // they opened the screen to adjust.
+        val office = GeoPoint(23.9, 90.5)
+        anchors.emit(Outcome.Success(anchorAt(office)))
+        val viewModel = viewModel()
+
+        viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+        runCurrent()
+        viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
+        runCurrent()
+
+        assertThat(viewModel.uiState.value.centre).isEqualTo(office)
+        assertThat(viewModel.uiState.value.zoom).isEqualTo(OfficePickerUiState.PLACE_ZOOM)
+        assertThat(viewModel.uiState.value.userLocation).isEqualTo(DHAKA_OFFICE)
+    }
+
+    @Test
+    fun `a first visit asks for location permission instead of opening on the world`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel()
+
+            viewModel.effects.test {
+                viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+                runCurrent()
+                assertThat(awaitItem())
+                    .isEqualTo(OfficePickerEffect.RequestLocationPermission)
+            }
+        }
+
+    @Test
+    fun `an office already saved is not a reason to prompt for permission`() =
+        runTest(dispatcher) {
+            // Nudging a pin does not require knowing where the user is. The
+            // prompt is the price of the first visit's convenience, and it
+            // should not be charged twice.
+            anchors.emit(Outcome.Success(anchorAt(DHAKA_OFFICE)))
+            val viewModel = viewModel()
+
+            viewModel.effects.test {
+                viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+                runCurrent()
+                expectNoEvents()
+            }
+        }
+
+    @Test
+    fun `a declined prompt is not re-fired every time the screen resumes`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel()
+
+            viewModel.effects.test {
+                viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+                runCurrent()
+                assertThat(awaitItem())
+                    .isEqualTo(OfficePickerEffect.RequestLocationPermission)
+
+                // The system dialog pauses the activity, so declining it
+                // produces exactly this sequence. Re-prompting here is an
+                // inescapable loop: the user cannot leave the screen without
+                // answering, and answering re-asks.
+                viewModel.onIntent(
+                    OfficePickerIntent.PermissionResult(granted = false, canAskAgain = true),
+                )
+                repeat(3) {
+                    viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = false))
+                }
+                runCurrent()
+
+                expectNoEvents()
+            }
+        }
+
+    @Test
+    fun `a resume does not drag the map back off the spot the user panned to`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel()
+            viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+            runCurrent()
+            viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
+            runCurrent()
+
+            // The user rejects the fix and pans to the actual front door.
+            val chosen = GeoPoint(23.75, 90.42)
+            viewModel.onIntent(OfficePickerIntent.CentreMoved(chosen))
+
+            // Glancing at another app and coming back re-delivers the
+            // permission state; it must not re-centre.
+            viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
+            runCurrent()
+
+            assertThat(viewModel.uiState.value.centre).isEqualTo(chosen)
+        }
+
+    // ------------------------------------------------------------------- zoom
+
+    @Test
+    fun `zoom cannot be pushed past the range the tile server serves`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+
+        viewModel.onIntent(OfficePickerIntent.ZoomChanged(OfficePickerUiState.MAX_ZOOM + 5))
+        assertThat(viewModel.uiState.value.zoom).isEqualTo(OfficePickerUiState.MAX_ZOOM)
+
+        viewModel.onIntent(OfficePickerIntent.ZoomChanged(OfficePickerUiState.MIN_ZOOM - 5))
+        assertThat(viewModel.uiState.value.zoom).isEqualTo(OfficePickerUiState.MIN_ZOOM)
+    }
+
+    @Test
+    fun `zooming keeps the pin on the spot it was framing`() = runTest(dispatcher) {
+        // The crosshair is the office-to-be. A zoom that shifted the centre
+        // would move the office every time the user tried to look closer at it.
+        val viewModel = viewModel()
+        viewModel.onIntent(OfficePickerIntent.CentreMoved(DHAKA_OFFICE))
+
+        viewModel.onIntent(OfficePickerIntent.ZoomChanged(OfficePickerUiState.PLACE_ZOOM + 1))
+
+        assertThat(viewModel.uiState.value.centre).isEqualTo(DHAKA_OFFICE)
+        assertThat(viewModel.uiState.value.zoom).isEqualTo(OfficePickerUiState.PLACE_ZOOM + 1)
+    }
 
     @Test
     fun `with no saved office, permission arriving early still centres on the user`() =
@@ -155,57 +280,35 @@ class OfficePickerViewModelTest {
             assertThat(viewModel.uiState.value.hasExistingAnchor).isTrue()
         }
 
-    // ------------------------------------------------------------- perimeter
+    // ---------------------------------------------------------------- saving
 
     @Test
-    fun `the perimeter is neutral until the user's own position is known`() =
-        runTest(dispatcher) {
-            val viewModel = viewModel()
-            viewModel.onIntent(OfficePickerIntent.CentreMoved(DHAKA_OFFICE))
+    fun `an office far outside the perimeter saves without complaint`() = runTest(dispatcher) {
+        // The picker imposes no geofence on itself. People set the office up
+        // from home, from the car park, from the wrong floor - and the 50 m
+        // rule is a question for check-in, asked against the anchor this
+        // screen writes. Refusing here would make the app unusable for the
+        // exact person it is being set up for.
+        val viewModel = viewModel()
+        viewModel.onIntent(OfficePickerIntent.ScreenStarted)
+        runCurrent()
+        viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
+        runCurrent()
 
-            // Neither green nor red: claiming either without a position would
-            // be inventing a fact.
-            assertThat(viewModel.uiState.value.isUserInsidePerimeter).isNull()
-            assertThat(viewModel.uiState.value.distanceFromUserMeters).isNull()
+        // ~110 km from the fix the tracker just returned.
+        val farAway = GeoPoint(DHAKA_OFFICE.latitude + 1.0, DHAKA_OFFICE.longitude)
+        viewModel.onIntent(OfficePickerIntent.CentreMoved(farAway))
+
+        assertThat(viewModel.uiState.value.canConfirm).isTrue()
+
+        viewModel.effects.test {
+            viewModel.onIntent(OfficePickerIntent.ConfirmClicked)
+            runCurrent()
+            assertThat(awaitItem()).isEqualTo(OfficePickerEffect.Saved(farAway))
         }
 
-    @Test
-    fun `a pin within the radius reads as inside`() = runTest(dispatcher) {
-        val viewModel = viewModel()
-        viewModel.onIntent(OfficePickerIntent.ScreenStarted)
-        runCurrent()
-        viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
-        runCurrent()
-
-        // ~11 m north of the user.
-        viewModel.onIntent(
-            OfficePickerIntent.CentreMoved(
-                GeoPoint(DHAKA_OFFICE.latitude + 0.0001, DHAKA_OFFICE.longitude),
-            ),
-        )
-
-        assertThat(viewModel.uiState.value.isUserInsidePerimeter).isTrue()
+        assertThat(anchors.savedAnchors.single().point).isEqualTo(farAway)
     }
-
-    @Test
-    fun `a pin beyond the radius reads as outside`() = runTest(dispatcher) {
-        val viewModel = viewModel()
-        viewModel.onIntent(OfficePickerIntent.ScreenStarted)
-        runCurrent()
-        viewModel.onIntent(OfficePickerIntent.PermissionStateChanged(granted = true))
-        runCurrent()
-
-        // ~1.1 km north of the user.
-        viewModel.onIntent(
-            OfficePickerIntent.CentreMoved(
-                GeoPoint(DHAKA_OFFICE.latitude + 0.01, DHAKA_OFFICE.longitude),
-            ),
-        )
-
-        assertThat(viewModel.uiState.value.isUserInsidePerimeter).isFalse()
-    }
-
-    // ---------------------------------------------------------------- saving
 
     @Test
     fun `confirming saves the pin as a hand-placed anchor, not as a fix`() =

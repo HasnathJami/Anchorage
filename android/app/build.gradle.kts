@@ -61,6 +61,12 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
     kotlin {
+        // Pinned, not inherited. Whatever JDK launches Gradle — an IDE's bundled
+        // JBR that silently moves to 25 on the next Studio update, or a shell
+        // JAVA_HOME — compilation still happens on 17, the same level the Flutter
+        // app builds at. Without this the two apps drift the moment one machine's
+        // toolchain changes.
+        jvmToolchain(17)
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }

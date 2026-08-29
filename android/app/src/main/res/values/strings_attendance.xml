@@ -2,7 +2,14 @@
 <resources>
     <!-- Screen chrome -->
     <string name="attendance_title">Attendance</string>
-    <string name="attendance_back">Back</string>
+    <string name="attendance_back">Exit Anchorage</string>
+
+    <!-- Back from the start destination is a shutdown, not a navigation step,
+         so it is confirmed. -->
+    <string name="attendance_exit_title">Exit Anchorage?</string>
+    <string name="attendance_exit_body">Anchorage will close and stop tracking your distance from the office. Any attendance you have already marked is saved.</string>
+    <string name="attendance_exit_confirm">Exit</string>
+    <string name="attendance_exit_dismiss">Stay</string>
     <string name="attendance_history">Attendance history</string>
 
     <!-- Office context card -->

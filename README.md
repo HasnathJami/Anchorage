@@ -283,7 +283,7 @@ randomness instead of its ceiling — the fix is in the history and in PROMPTS.m
 
 | Tool | Version used |
 | --- | --- |
-| JDK | 17 (Android Studio's bundled JBR works) |
+| JDK | **17 exactly** — Gradle 8.14.3 rejects 25+; both apps pin `jvmToolchain(17)` |
 | Android SDK | Platform 36, Build-Tools 36 |
 | Flutter | 3.38.9 (Dart 3.10.8) |
 
@@ -299,7 +299,8 @@ cd Anchorage
 ```bash
 cd android
 
-# Point Gradle at a JDK 17+ (this repo was built with Android Studio's JBR)
+# Both apps build on JDK 17. Gradle 8.14.3 rejects JDK 25 (an Android Studio
+# update can silently select it) — see "The JDK" in CLAUDE.md.
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"     # macOS/Linux/Git Bash
 # setx JAVA_HOME "C:\Program Files\Android\Android Studio\jbr"     # Windows, once
 

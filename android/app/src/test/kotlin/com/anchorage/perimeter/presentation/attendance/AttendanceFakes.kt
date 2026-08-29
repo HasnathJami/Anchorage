@@ -37,8 +37,11 @@ val NEAR = GeoPoint(OFFICE.latitude + 0.0002, OFFICE.longitude)
 /** ~333 m north of [OFFICE]. */
 val FAR = GeoPoint(OFFICE.latitude + 0.003, OFFICE.longitude)
 
-fun officeAnchor(accuracyMeters: Float = 5f) = OfficeAnchor(
-    point = OFFICE,
+fun officeAnchor(
+    accuracyMeters: Float = 5f,
+    point: GeoPoint = OFFICE,
+) = OfficeAnchor(
+    point = point,
     accuracyMeters = accuracyMeters,
     capturedAtEpochMillis = 1_756_000_000_000L,
 )

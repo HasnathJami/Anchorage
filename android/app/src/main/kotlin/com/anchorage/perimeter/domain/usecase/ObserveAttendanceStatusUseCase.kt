@@ -33,8 +33,11 @@ import java.time.Instant
  *     the whole screen would stay blank until the first GPS fix arrives -
  *     which on a cold start can be 20 seconds. With it, the office card and
  *     any permission error render immediately.
- *  2. [scan] threads the previous [ProximityStatus] into the evaluator. That is
- *     what powers the exit hysteresis; a stateless `map` could not do it.
+ *  2. [scan] threads the previous [ProximityStatus] and the last known
+ *     [LocationFix] forward. The first powers the exit hysteresis, which a
+ *     stateless `map` could not do; the second is what lets the dial keep
+ *     reading during a location dropout *and* re-measure the moment the user
+ *     moves the office.
  *  3. "Today" is recomputed on every emission rather than captured at
  *     subscribe time, so a session left open across midnight re-arms
  *     correctly instead of reporting yesterday's check-in.
@@ -66,27 +69,49 @@ class ObserveAttendanceStatusUseCase(
         return combine(anchorFlow, fixFlow, historyFlow) { anchor, fix, history ->
             Inputs(anchor, fix, history)
         }
-            .scan(AttendanceStatus.initial(window)) { previous, inputs -> reduce(previous, inputs) }
+            .scan(Carried(AttendanceStatus.initial(window), lastFix = null)) { previous, inputs ->
+                reduce(previous, inputs)
+            }
             .drop(1) // discard the seed; the first real emission is index 1
+            .map { it.status }
     }
 
-    private fun reduce(previous: AttendanceStatus, inputs: Inputs): AttendanceStatus {
+    /**
+     * What the scan threads forward: the projection, plus the last position we
+     * actually know about.
+     *
+     * Carrying the *fix* rather than the finished reading is what makes the
+     * dial survive re-anchoring. The reading is an answer about one particular
+     * office; reusing it after the office moves reports the distance to a
+     * building the user no longer works in. The fix is raw enough to still be
+     * true, so it can be measured again against whatever anchor is current.
+     */
+    private data class Carried(val status: AttendanceStatus, val lastFix: LocationFix?)
+
+    private fun reduce(previous: Carried, inputs: Inputs): Carried {
         val anchor = (inputs.anchor as? Outcome.Success)?.value
         val storageError = (inputs.anchor as? Outcome.Failure)?.error as? AppError.Storage
 
         val locationError = (inputs.fix as? Outcome.Failure)?.error as? AppError.Location
-        val fix = (inputs.fix as? Outcome.Success)?.value
+
+        // A transient location error must not erase the last known distance -
+        // the user still deserves to see how far out they were.
+        val fix = (inputs.fix as? Outcome.Success)?.value ?: previous.lastFix
+
+        // Hysteresis smooths jitter around *one* fence. Carrying a previous
+        // status across a change of office would apply the wider exit radius
+        // to a perimeter that state was never about, so the anchor change
+        // resets it.
+        val isSameAnchor = previous.status.anchor?.point == anchor?.point
 
         val reading = if (anchor != null && fix != null) {
             geofenceEvaluator.evaluate(
                 anchor = anchor,
                 fix = fix,
-                previousStatus = previous.reading?.status,
+                previousStatus = previous.status.reading?.status.takeIf { isSameAnchor },
             )
         } else {
-            // A transient location error must not erase the last known
-            // distance - the user still deserves to see how far they were.
-            previous.reading.takeIf { anchor != null }
+            null
         }
 
         val today = timeProvider.localDate()
@@ -96,14 +121,17 @@ class ObserveAttendanceStatusUseCase(
                 .toLocalDate() == today
         }
 
-        return AttendanceStatus(
-            anchor = anchor,
-            reading = reading,
-            locationError = locationError,
-            storageError = storageError,
-            todayRecord = todayRecord,
-            window = window,
-            isWindowOpen = window.contains(timeProvider.localTime()),
+        return Carried(
+            status = AttendanceStatus(
+                anchor = anchor,
+                reading = reading,
+                locationError = locationError,
+                storageError = storageError,
+                todayRecord = todayRecord,
+                window = window,
+                isWindowOpen = window.contains(timeProvider.localTime()),
+            ),
+            lastFix = fix,
         )
     }
 }

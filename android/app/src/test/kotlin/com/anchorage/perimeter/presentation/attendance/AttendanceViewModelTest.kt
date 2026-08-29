@@ -209,6 +209,59 @@ class AttendanceViewModelTest {
         assertThat(state.canMarkAttendance).isFalse()
     }
 
+    @Test
+    fun `moving the office re-measures against the new one, even with no fresh fix`() =
+        runTest(dispatcher) {
+            // The bug this pins: on a dropout the screen used to carry the last
+            // *reading* forward, and a reading is an answer about one specific
+            // office. Re-anchoring left the dial reporting the distance to the
+            // building the user had just stopped using - and it is precisely
+            // when the provider is struggling that someone re-places the pin by
+            // hand. Carrying the last *fix* instead re-measures.
+            grantPermission()
+            officeRepository.emit(Outcome.Success(officeAnchor(point = OFFICE)))
+            tracker.emit(Outcome.Success(fix(point = NEAR)))
+            advanceUntilIdle()
+
+            val before = viewModel.uiState.value.reading!!.distanceMeters
+            assertThat(before).isLessThan(50.0)
+
+            // The provider drops out, so nothing fresh arrives from here on.
+            tracker.emit(Outcome.Failure(AppError.Location.PositionUnavailable()))
+            advanceUntilIdle()
+
+            // The user re-anchors the office a long way off.
+            officeRepository.emit(Outcome.Success(officeAnchor(point = FAR)))
+            advanceUntilIdle()
+
+            val after = viewModel.uiState.value.reading!!.distanceMeters
+            assertThat(after).isGreaterThan(before)
+            assertThat(viewModel.uiState.value.proximity).isEqualTo(ProximityUi.OutOfRange)
+        }
+
+    @Test
+    fun `a closed window locks the button but the dial keeps measuring`() = runTest(dispatcher) {
+        // The window governs whether a check-in is *accepted*, not whether the
+        // distance is *worth knowing*. Someone arriving at 16:00 still needs to
+        // see how far out they are - that is how they learn the app is working
+        // and where the perimeter actually sits.
+        grantPermission()
+        officeRepository.emit(Outcome.Success(officeAnchor()))
+        time.instant = Instant.parse("2026-08-28T10:00:00Z") // 16:00 Dhaka
+        tracker.emit(Outcome.Success(fix(point = FAR)))
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertThat(state.isWindowOpen).isFalse()
+        assertThat(state.canMarkAttendance).isFalse()
+
+        // The dial reads all three of these; a null in any one blanks it.
+        assertThat(state.reading).isNotNull()
+        assertThat(state.reading!!.distanceMeters).isGreaterThan(100.0)
+        assertThat(state.proximity).isEqualTo(ProximityUi.OutOfRange)
+        assertThat(state.reading!!.fenceProgress).isEqualTo(1f)
+    }
+
     // ---------------------------------------------------------------- actions
 
     @Test

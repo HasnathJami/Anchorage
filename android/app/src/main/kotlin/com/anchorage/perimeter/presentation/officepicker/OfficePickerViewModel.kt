@@ -22,26 +22,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 /**
  * The office picker's state holder.
  *
  * Same discipline as [com.anchorage.perimeter.presentation.attendance.AttendanceViewModel]:
- * it translates intents into use-case calls and projects the result. It owns
- * no geofence arithmetic - the radius, the distance and the inside/outside
- * decision all come from the domain, so the ring on this screen and the dial
- * on the previous one can never disagree.
+ * it translates intents into use-case calls and projects the result. It makes
+ * no geofence judgement at all - this screen records a coordinate, and whether
+ * the user is standing inside it is a question for check-in.
  *
  * Two things here are worth reading closely.
  *
  * **Tile failures are not screen failures.** A tile that will not load sets
  * [OfficePickerUiState.isMapImageryDegraded] and nothing else. The pin, the
- * perimeter, the coordinates and the confirm button all keep working with a
- * plain grid behind them, because a picker that refuses to open without a
- * network is useless in exactly the basements and car parks where people need
- * to set an office.
+ * coordinates and the confirm button all keep working with a plain grid behind
+ * them, because a picker that refuses to open without a network is useless in
+ * exactly the basements and car parks where people need to set an office.
  *
  * **Only one location request is ever in flight.** "Find me" is idempotent
  * while it is running; a user jabbing the button cannot stack fifteen
@@ -75,6 +76,27 @@ class OfficePickerViewModel @Inject constructor(
     private var autoLocateWhenReady = false
     private var hasAppliedInitialCentre = false
     private var hasLocationPermission = false
+
+    /**
+     * The entry prompt fires once per screen, never once per resume.
+     *
+     * `repeatOnLifecycle` re-delivers the permission state every time the
+     * screen comes back, and the system permission dialog itself pauses the
+     * activity - so a prompt driven straight off "not granted" would re-open
+     * itself the moment the user declined it.
+     */
+    private var hasRequestedPermissionOnEntry = false
+
+    /**
+     * The last viewport the canvas asked for, so Retry has something to retry.
+     *
+     * The canvas only emits a request when the camera or the viewport moves,
+     * and a user tapping Retry has moved neither.
+     */
+    private var lastRequestedTiles: List<TileCoordinate> = emptyList()
+
+    /** @see loadTile - stops the offline dialog re-opening on every pan. */
+    private var hasDismissedImageryNotice = false
     private val tilesInFlight = mutableSetOf<TileCoordinate>()
 
     fun onIntent(intent: OfficePickerIntent) {
@@ -99,7 +121,7 @@ class OfficePickerViewModel @Inject constructor(
             OfficePickerIntent.FindMeClicked -> onFindMe()
             OfficePickerIntent.ConfirmClicked -> onConfirm()
             OfficePickerIntent.NoticeActionClicked -> onNoticeAction()
-            OfficePickerIntent.NoticeDismissed -> _uiState.update { it.copy(notice = null) }
+            OfficePickerIntent.NoticeDismissed -> onNoticeDismissed()
         }
     }
 
@@ -146,10 +168,19 @@ class OfficePickerViewModel @Inject constructor(
 
                 if (!startupResolved) {
                     startupResolved = true
-                    // Honour a "find me" that arrived while this was still in
-                    // flight, but only when there is no office to preserve.
-                    if (autoLocateWhenReady && existing == null) locate(recentre = true)
+                    // Honour a permission grant that arrived while this was
+                    // still in flight. What the fix is *for* depends on what
+                    // was found: with no office it becomes the camera, with
+                    // one it only lights up the ring.
+                    if (autoLocateWhenReady) locate(recentre = existing == null)
                     autoLocateWhenReady = false
+
+                    // No office yet means this is the first visit, and the
+                    // first visit's whole job is "put the office where I am
+                    // standing". Asking here rather than waiting for the user
+                    // to discover Find Me is the difference between opening on
+                    // their street and opening on the mid-Atlantic.
+                    if (existing == null) requestPermissionOnEntry()
                 }
             }
             .launchIn(viewModelScope)
@@ -173,7 +204,32 @@ class OfficePickerViewModel @Inject constructor(
             autoLocateWhenReady = true
             return
         }
-        if (!_uiState.value.hasExistingAnchor) locate(recentre = true)
+
+        val state = _uiState.value
+        when {
+            // Nothing is on screen yet - no saved office, no spot panned to.
+            // The fix is the only subject available, so it becomes the camera.
+            !state.hasCentredOnSomething -> locate(recentre = true)
+
+            // The camera already has a subject the user cares about. Fetch the
+            // position anyway, because the ring's colour and the distance
+            // read-out are lies without it, but leave the map where it is.
+            //
+            // Guarding on a *null* position rather than on "not yet fetched"
+            // is what keeps this to one request: this runs on every resume,
+            // and re-fixing each time the user glances at another app would
+            // hold the GPS radio awake for a read-out that has not changed.
+            state.userLocation == null -> locate(recentre = false)
+
+            else -> Unit
+        }
+    }
+
+    /** @see hasRequestedPermissionOnEntry */
+    private fun requestPermissionOnEntry() {
+        if (hasLocationPermission || hasRequestedPermissionOnEntry) return
+        hasRequestedPermissionOnEntry = true
+        emitEffect(OfficePickerEffect.RequestLocationPermission)
     }
 
     private fun onPermissionResult(intent: OfficePickerIntent.PermissionResult) {
@@ -271,13 +327,20 @@ class OfficePickerViewModel @Inject constructor(
             }
 
             PickerNotice.MapImageryUnavailable -> {
-                // Clearing the flag *and* the in-flight set is what makes the
-                // retry real: without the second, every tile would still be
-                // marked as "already asked for" and nothing would refetch.
+                // Clearing the flag and the in-flight set is not enough on its
+                // own. The canvas only asks for tiles when the camera or the
+                // viewport changes, and a user tapping Retry has moved
+                // neither - so the old code wiped the map and then waited for
+                // a request that never came. Retry has to re-issue the last
+                // viewport itself.
                 tilesInFlight.clear()
+                // Retrying is the user asking to be told again, so the
+                // dismissal that silenced the dialog is spent.
+                hasDismissedImageryNotice = false
                 _uiState.update {
                     it.copy(notice = null, isMapImageryDegraded = false, tiles = emptyMap())
                 }
+                ensureTiles(lastRequestedTiles)
             }
 
             PickerNotice.SaveFailed -> {
@@ -292,6 +355,8 @@ class OfficePickerViewModel @Inject constructor(
     // ------------------------------------------------------------------- tiles
 
     private fun ensureTiles(requested: List<TileCoordinate>) {
+        lastRequestedTiles = requested
+
         val known = _uiState.value.tiles
         val missing = requested
             .map { it.wrapped() }
@@ -300,33 +365,81 @@ class OfficePickerViewModel @Inject constructor(
         if (missing.isEmpty()) return
 
         viewModelScope.launch {
-            missing.forEach { tile ->
-                when (val result = tileSource.load(tile)) {
-                    is Outcome.Success -> _uiState.update {
-                        it.copy(tiles = it.tiles + (tile to result.value))
-                    }
+            // Tiles load concurrently, unlike the upload queue's deliberate
+            // serialism. The trade is the opposite one: a tile is a few KB and
+            // a screenful is twenty of them, so fetching one at a time turns a
+            // 200 ms round trip into four seconds of blank grid. The semaphore
+            // is what stops "concurrent" becoming "all forty at once" and
+            // starving the link the way parallel uploads would.
+            val gate = Semaphore(MAX_CONCURRENT_TILE_LOADS)
+            missing.map { tile ->
+                launch {
+                    gate.withPermit { loadTile(tile) }
+                }
+            }.joinAll()
+        }
+    }
 
-                    is Outcome.Failure -> {
-                        tilesInFlight.remove(tile)
-                        // One dialog for the whole failure, not one per tile:
-                        // a dropped connection fails a dozen requests at once
-                        // and the user needs to be told once.
-                        if (result.error is AppError.MapTiles.Offline ||
-                            result.error is AppError.MapTiles.Timeout
-                        ) {
-                            _uiState.update {
-                                it.copy(
-                                    isMapImageryDegraded = true,
-                                    notice = it.notice ?: PickerNotice.MapImageryUnavailable,
-                                )
-                            }
-                        } else {
-                            _uiState.update { it.copy(isMapImageryDegraded = true) }
-                        }
+    private suspend fun loadTile(tile: TileCoordinate) {
+        when (val result = tileSource.load(tile)) {
+            is Outcome.Success -> _uiState.update {
+                it.copy(tiles = it.tiles.plusBounded(tile, result.value))
+            }
+
+            is Outcome.Failure -> {
+                tilesInFlight.remove(tile)
+                // One dialog for the whole failure, not one per tile:
+                // a dropped connection fails a dozen requests at once
+                // and the user needs to be told once.
+                if (result.error is AppError.MapTiles.Offline ||
+                    result.error is AppError.MapTiles.Timeout
+                ) {
+                    _uiState.update {
+                        it.copy(
+                            isMapImageryDegraded = true,
+                            // Once the user has closed this dialog, the offline
+                            // chip carries the message. Re-raising it on the
+                            // next failed tile would put a modal in front of a
+                            // map the user has already chosen to use offline -
+                            // and offline, every pan fails another dozen tiles.
+                            notice = if (hasDismissedImageryNotice) {
+                                it.notice
+                            } else {
+                                it.notice ?: PickerNotice.MapImageryUnavailable
+                            },
+                        )
                     }
+                } else {
+                    _uiState.update { it.copy(isMapImageryDegraded = true) }
                 }
             }
         }
+    }
+
+    private fun onNoticeDismissed() {
+        if (_uiState.value.notice == PickerNotice.MapImageryUnavailable) {
+            hasDismissedImageryNotice = true
+        }
+        _uiState.update { it.copy(notice = null) }
+    }
+
+    /**
+     * Adds a tile, evicting the oldest once the map is full.
+     *
+     * Without a bound this grew for the life of the screen: every tile the
+     * user ever panned across stayed in state, each one a quarter-megabyte
+     * once decoded, and each new arrival copied the whole map again. That is
+     * the stutter that got worse the longer the picker was open.
+     * [OsmTileSource]'s own LRU means an evicted tile costs a memory read to
+     * bring back, not a request.
+     */
+    private fun Map<TileCoordinate, ByteArray>.plusBounded(
+        tile: TileCoordinate,
+        bytes: ByteArray,
+    ): Map<TileCoordinate, ByteArray> {
+        if (size < MAX_TILES_IN_STATE) return this + (tile to bytes)
+        val overflow = size - MAX_TILES_IN_STATE + 1
+        return entries.drop(overflow).associate { it.key to it.value } + (tile to bytes)
     }
 
     private fun emitEffect(effect: OfficePickerEffect) {
@@ -347,5 +460,16 @@ class OfficePickerViewModel @Inject constructor(
         is AppError.Storage -> PickerNotice.SaveFailed
         is AppError.Attendance -> PickerNotice.PositionUnavailable
         is AppError.Unexpected -> PickerNotice.PositionUnavailable
+    }
+
+    private companion object {
+        /**
+         * Enough parallelism to fill a screen in one round trip, few enough
+         * that a weak link is not asked for forty sockets at once.
+         */
+        const val MAX_CONCURRENT_TILE_LOADS = 6
+
+        /** Roughly three screenfuls: pan headroom without unbounded growth. */
+        const val MAX_TILES_IN_STATE = 64
     }
 }

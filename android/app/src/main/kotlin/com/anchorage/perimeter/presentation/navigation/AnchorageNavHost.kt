@@ -25,6 +25,7 @@ object AnchorageDestinations {
  */
 @Composable
 fun AnchorageNavHost(
+    onExitApp: () -> Unit,
     navController: NavHostController = rememberNavController(),
 ) {
     NavHost(
@@ -33,9 +34,11 @@ fun AnchorageNavHost(
     ) {
         composable(AnchorageDestinations.ATTENDANCE) {
             AttendanceRoute(
-                // There is nothing behind the start destination, so "back"
-                // finishes the task rather than popping to an empty stack.
-                onBack = { navController.popBackStack() },
+                // There is nothing behind the start destination. `popBackStack`
+                // here was a no-op - it returns false on the start entry - so
+                // the app bar's arrow did nothing at all. Leaving Attendance
+                // means leaving the app, which the screen confirms first.
+                onExitApp = onExitApp,
                 onOpenHistory = { navController.navigate(AnchorageDestinations.HISTORY) },
                 onPickOffice = { navController.navigate(AnchorageDestinations.OFFICE_PICKER) },
             )

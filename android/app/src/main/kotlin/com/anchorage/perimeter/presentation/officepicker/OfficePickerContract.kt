@@ -1,9 +1,7 @@
 package com.anchorage.perimeter.presentation.officepicker
 
-import com.anchorage.perimeter.domain.geo.HaversineDistanceCalculator
 import com.anchorage.perimeter.domain.model.GeoPoint
 import com.anchorage.perimeter.domain.model.TileCoordinate
-import com.anchorage.perimeter.domain.policy.GeofencePolicy
 
 /**
  * The office picker's MVI contract.
@@ -12,7 +10,7 @@ import com.anchorage.perimeter.domain.policy.GeofencePolicy
  * using works this way, because a pin dragged by a fingertip is a pin hidden
  * by a fingertip - and the one pixel the user most needs to see is the one
  * they are covering. So [centre] is both "where the camera is" and "where the
- * office would be", and the crosshair is drawn at the exact centre of the
+ * office would be", and the marker is dropped at the exact centre of the
  * viewport.
  */
 data class OfficePickerUiState(
@@ -27,24 +25,17 @@ data class OfficePickerUiState(
     val tiles: Map<TileCoordinate, ByteArray> = emptyMap(),
     val isMapImageryDegraded: Boolean = false,
     val notice: PickerNotice? = null,
-    val radiusMeters: Double = GeofencePolicy.DEFAULT_RADIUS_METERS,
 ) {
 
     /**
-     * How far the user currently stands from the pin, or `null` when their
-     * position is unknown.
+     * The only gate on saving, and it is not a geofence one.
      *
-     * Null is a real answer here, not a missing one: it drives the perimeter's
-     * third, neutral colour. Painting the ring green or red without knowing
-     * where the user is would be inventing a fact.
+     * The picker never refuses a location for being too far from the user:
+     * people set up an office from home, from the car park, from the wrong
+     * floor. It refuses exactly one thing - saving [WORLD_CENTRE], the
+     * placeholder nobody chose. Whether the user is actually *at* the office
+     * is a question for check-in, asked against the saved anchor.
      */
-    val distanceFromUserMeters: Double?
-        get() = userLocation?.let { user -> HaversineDistanceCalculator.distanceMeters(user, centre) }
-
-    /** `null` when [userLocation] is unknown - see [distanceFromUserMeters]. */
-    val isUserInsidePerimeter: Boolean?
-        get() = distanceFromUserMeters?.let { it <= radiusMeters }
-
     val canConfirm: Boolean get() = !isSaving && hasCentredOnSomething
 
     companion object {
@@ -59,7 +50,7 @@ data class OfficePickerUiState(
         val WORLD_CENTRE = GeoPoint(latitude = 20.0, longitude = 0.0)
         const val WORLD_ZOOM = 2
 
-        /** Close enough that a 50 m circle is a comfortable on-screen size. */
+        /** Close enough to tell one building from its neighbour. */
         const val PLACE_ZOOM = 17
         const val MIN_ZOOM = 2
         const val MAX_ZOOM = 19
@@ -71,7 +62,7 @@ sealed interface OfficePickerIntent {
     data class PermissionStateChanged(val granted: Boolean) : OfficePickerIntent
     data class PermissionResult(val granted: Boolean, val canAskAgain: Boolean) : OfficePickerIntent
 
-    /** The map was panned; [point] is the new coordinate under the crosshair. */
+    /** The map was panned; [point] is the new coordinate under the marker. */
     data class CentreMoved(val point: GeoPoint) : OfficePickerIntent
     data class ZoomChanged(val zoom: Int) : OfficePickerIntent
 

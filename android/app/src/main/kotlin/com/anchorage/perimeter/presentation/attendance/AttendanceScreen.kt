@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -26,24 +27,30 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -79,7 +86,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun AttendanceRoute(
-    onBack: () -> Unit,
+    onExitApp: () -> Unit,
     onOpenHistory: () -> Unit,
     onPickOffice: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,6 +97,16 @@ fun AttendanceRoute(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val lifecycleOwner = ComposeLifecycleOwner.current
+
+    // Attendance is the start destination, so leaving it means leaving the
+    // app. `rememberSaveable` because rotating the phone with the dialog open
+    // must not silently answer it.
+    var isConfirmingExit by rememberSaveable { mutableStateOf(false) }
+
+    // The system gesture and the app bar's arrow are the same intent and get
+    // the same answer. Routing only one of them through the confirmation is
+    // how "are you sure?" becomes a dialog users learn to route around.
+    BackHandler(enabled = !isConfirmingExit) { isConfirmingExit = true }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -162,10 +179,13 @@ fun AttendanceRoute(
     AttendanceContent(
         state = uiState,
         snackbarHostState = snackbarHostState,
-        onBack = onBack,
+        onBack = { isConfirmingExit = true },
         onOpenHistory = onOpenHistory,
         onPickOffice = onPickOffice,
         onIntent = viewModel::onIntent,
+        isConfirmingExit = isConfirmingExit,
+        onConfirmExit = onExitApp,
+        onDismissExit = { isConfirmingExit = false },
         modifier = modifier,
     )
 }
@@ -186,6 +206,9 @@ fun AttendanceContent(
     onOpenHistory: () -> Unit,
     onPickOffice: () -> Unit = {},
     onIntent: (AttendanceIntent) -> Unit,
+    isConfirmingExit: Boolean = false,
+    onConfirmExit: () -> Unit = {},
+    onDismissExit: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = AnchorageTheme.colors
@@ -279,7 +302,64 @@ fun AttendanceContent(
                 )
             }
         }
+
+        if (isConfirmingExit) {
+            ExitConfirmationDialog(onConfirm = onConfirmExit, onDismiss = onDismissExit)
+        }
     }
+}
+
+/**
+ * "Leave Anchorage?"
+ *
+ * The confirmation exists because this screen is the app's front door: back
+ * from here is not a navigation step, it is a shutdown, and an accidental edge
+ * swipe should not cost the user a location fix they have been waiting on.
+ *
+ * Dismissing is the default action - it is the safe one, it is what the
+ * outside-tap and a second back press both do, and the destructive choice is
+ * never the one a stray tap lands on.
+ */
+@Composable
+private fun ExitConfirmationDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.attendance_exit_title),
+                style = AnchorageTheme.typography.body.copy(fontWeight = FontWeight.SemiBold),
+                color = AnchorageTheme.colors.textPrimary,
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.attendance_exit_body),
+                style = AnchorageTheme.typography.body,
+                color = AnchorageTheme.colors.textSecondary,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    text = stringResource(R.string.attendance_exit_confirm),
+                    color = AnchorageTheme.colors.dangerText,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = stringResource(R.string.attendance_exit_dismiss),
+                    color = AnchorageTheme.colors.primary,
+                )
+            }
+        },
+        containerColor = AnchorageTheme.colors.surface,
+        shape = AnchorageTheme.shapes.card,
+    )
 }
 
 // --------------------------------------------------------------- platform glue

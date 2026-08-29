@@ -28,9 +28,8 @@ brief asks for two native-stack implementations.
 
 ```bash
 cd android
-export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # JDK 17+; JAVA_HOME on this
-                                                                 # machine points somewhere invalid
-./gradlew testDebugUnitTest          # all 102 JVM unit tests
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # JDK 17 — see "The JDK" below
+./gradlew testDebugUnitTest          # all 136 JVM unit tests
 ./gradlew testDebugUnitTest --tests "com.anchorage.perimeter.domain.*"    # one layer
 ./gradlew assembleDebug              # debug APK
 ./gradlew assembleRelease            # release APK (minified, debug-signed)
@@ -51,6 +50,44 @@ flutter test                         # all unit / bloc tests
 flutter test test/domain/            # one layer
 flutter build apk --release
 ```
+
+### The JDK — one version, and it is 17
+
+**Both apps build on JDK 17. Not "17 or newer" — 17.** Android Studio bundles its own JBR and
+moves it forward on its own schedule; a Studio update pushed the IDE's Gradle JVM to **JBR 25**,
+which Gradle 8.14.3 refuses outright (*"supports Java versions between 1.8 and 24"*). The Flutter
+app kept working through that, because Flutter resolves its JDK from a different setting. The two
+apps had silently drifted onto different JDKs — that is the failure mode this section exists to
+prevent.
+
+Three independent places choose a JDK, and all three must agree:
+
+| Who | Where it reads the JDK from | Value |
+| --- | --- | --- |
+| Android Studio / IntelliJ | `.idea/gradle.xml` → `gradleJvm` | `C:/Program Files/Android/Android Studio/jbr` |
+| `flutter build` | `flutter config --jdk-dir` | `C:\Program Files\Android\Android Studio\jbr` |
+| A bare `./gradlew` in a shell | `JAVA_HOME` | same path |
+
+```bash
+# check all three
+"$JAVA_HOME/bin/java" -version                 # expect 17.x
+flutter config --list | grep jdk-dir
+grep gradleJvm .idea/gradle.xml                # .idea/ is gitignored — local only
+
+# repair
+setx JAVA_HOME "C:\Program Files\Android\Android Studio\jbr"
+flutter config --jdk-dir "C:\Program Files\Android\Android Studio\jbr"
+# IDE: Settings → Build Tools → Gradle → Gradle JVM → the JDK 17 above
+```
+
+**`jvmToolchain(17)` in both app build files is the backstop.** `android/app/build.gradle.kts`
+and `flutter/android/app/build.gradle.kts` each pin it, so compilation happens on 17 even when the
+launching JVM is something else. It cannot rescue the IDE from a Gradle JVM that Gradle itself
+rejects at startup — the settings above are still the fix for that — but it does guarantee the two
+apps never produce bytecode at different levels. Do not remove either block.
+
+**Do not "fix" this by bumping Gradle to 9.x so it accepts JBR 25.** That drags AGP with it, and
+the AGP / Kotlin / Hilt pins below exist for reasons that have not changed.
 
 **Note on this machine:** the C: drive runs close to full. Both builds have needed
 intermediate cleanup. If Gradle reports *"Failed to create parent directory"* or *"Could not
@@ -173,7 +210,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **129 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
+Current state: **136 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,9 +18,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -40,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -170,6 +173,10 @@ fun OfficePickerContent(
     Scaffold(
         modifier = modifier,
         containerColor = colors.backgroundTop,
+        // The body runs to the bottom edge and [ConfirmBar] insets itself, so
+        // the confirm surface - not the map, and not the mint background -
+        // is what sits behind the system navigation bar.
+        contentWindowInsets = WindowInsets(0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -205,8 +212,6 @@ fun OfficePickerContent(
                     centre = state.centre,
                     zoom = state.zoom,
                     userLocation = state.userLocation,
-                    radiusMeters = state.radiusMeters,
-                    isUserInsidePerimeter = state.isUserInsidePerimeter,
                     tiles = state.tiles,
                     onCentreMoved = { onIntent(OfficePickerIntent.CentreMoved(it)) },
                     onZoomChanged = { onIntent(OfficePickerIntent.ZoomChanged(it)) },
@@ -233,14 +238,28 @@ fun OfficePickerContent(
                         .padding(spacing.xs),
                 )
 
-                // Bottom-right of the map, exactly where a thumb rests.
-                FindMeButton(
-                    isBusy = state.isLocating,
-                    onClick = { onIntent(OfficePickerIntent.FindMeClicked) },
+                // Bottom-right of the map, exactly where a thumb rests. Zoom
+                // sits above Find Me rather than beside it: the two are used
+                // at different moments - Find Me once on arrival, zoom
+                // repeatedly while framing the building - and stacking them
+                // keeps the repeated one closest to the thumb.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(spacing.sm),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(spacing.md),
-                )
+                ) {
+                    ZoomControls(
+                        zoom = state.zoom,
+                        onZoomChanged = { onIntent(OfficePickerIntent.ZoomChanged(it)) },
+                    )
+
+                    FindMeButton(
+                        isBusy = state.isLocating,
+                        onClick = { onIntent(OfficePickerIntent.FindMeClicked) },
+                    )
+                }
             }
 
             ConfirmBar(state = state, onIntent = onIntent)
@@ -272,6 +291,77 @@ private fun MapOfflineChip(modifier: Modifier = Modifier) {
                 horizontal = AnchorageTheme.spacing.sm,
                 vertical = AnchorageTheme.spacing.xxs,
             ),
+        )
+    }
+}
+
+/**
+ * Zoom in and out, as buttons rather than pinch alone.
+ *
+ * Pinch is a two-handed gesture, and this screen is used one-handed while
+ * standing outside a building - the other hand is holding something. The
+ * buttons also make the zoom range *visible*: at 19 the plus greys out, so a
+ * user pinching fruitlessly at maximum detail can tell the map has stopped
+ * rather than assuming it is broken.
+ *
+ * One pill with a hairline between the halves, not two circles: they act on
+ * the same axis of one property, and separating them reads as two unrelated
+ * controls.
+ */
+@Composable
+private fun ZoomControls(
+    zoom: Int,
+    onZoomChanged: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = AnchorageTheme.colors
+    val canZoomIn = zoom < OfficePickerUiState.MAX_ZOOM
+    val canZoomOut = zoom > OfficePickerUiState.MIN_ZOOM
+
+    Surface(
+        modifier = modifier.width(48.dp),
+        shape = AnchorageTheme.shapes.button,
+        color = colors.surface,
+        shadowElevation = 3.dp,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            ZoomButton(
+                icon = Icons.Filled.Add,
+                contentDescription = stringResource(R.string.picker_zoom_in),
+                enabled = canZoomIn,
+                onClick = { onZoomChanged(zoom + 1) },
+            )
+
+            HorizontalDivider(
+                modifier = Modifier.width(24.dp),
+                color = colors.outlineSubtle,
+            )
+
+            ZoomButton(
+                icon = Icons.Filled.Remove,
+                contentDescription = stringResource(R.string.picker_zoom_out),
+                enabled = canZoomOut,
+                onClick = { onZoomChanged(zoom - 1) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ZoomButton(
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = AnchorageTheme.colors
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            // Greyed rather than hidden: a control that vanishes at the end of
+            // its range leaves the user wondering where it went.
+            tint = if (enabled) colors.primary else colors.textTertiary,
         )
     }
 }
@@ -310,10 +400,14 @@ private fun FindMeButton(
 }
 
 /**
- * Coordinates, the live distance read-out and the confirm button.
+ * The chosen coordinates and the confirm button. Nothing else.
  *
- * The distance sentence is what stops the ring's colour from being the only
- * carrier of state - the accessibility rule the rest of the app already obeys.
+ * There is deliberately no "you are N m from this point" read-out. The picker
+ * places an office; it does not audit where the user is standing while they
+ * place it, and a sentence saying "outside the 50 m perimeter" beside a button
+ * that saves anyway reads as a warning about a rule that is not being applied.
+ * The real comparison - current position against the saved anchor - happens on
+ * the Attendance screen, where it decides something.
  */
 @Composable
 private fun ConfirmBar(
@@ -327,9 +421,18 @@ private fun ConfirmBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // The inset lives here, inside the Surface, rather than on the
+                // Scaffold's content. Both keep the button clear of the system
+                // bar, but only this one lets the Surface *paint* that strip -
+                // so the navigation bar matches the confirm bar instead of
+                // showing the map sliding past underneath it.
+                //
+                // Exactly one of the two applies it: the Scaffold's own inset
+                // is switched off above. Insetting in both places is what
+                // stranded the button a full nav-bar height off the edge.
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = spacing.md, vertical = spacing.md),
-            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+            verticalArrangement = Arrangement.spacedBy(spacing.sm),
         ) {
             Text(
                 text = stringResource(
@@ -340,18 +443,6 @@ private fun ConfirmBar(
                 style = AnchorageTheme.typography.coordinate,
                 color = colors.textPrimary,
             )
-
-            Text(
-                text = perimeterSentence(state),
-                style = AnchorageTheme.typography.body,
-                color = when (state.isUserInsidePerimeter) {
-                    true -> colors.successText
-                    false -> colors.dangerText
-                    null -> colors.textSecondary
-                },
-            )
-
-            Spacer(Modifier.width(spacing.xxs))
 
             AnchoragePrimaryButton(
                 text = stringResource(
@@ -367,25 +458,6 @@ private fun ConfirmBar(
                     },
             )
         }
-    }
-}
-
-@Composable
-private fun perimeterSentence(state: OfficePickerUiState): String {
-    val distance = state.distanceFromUserMeters
-    return when {
-        distance == null -> stringResource(R.string.picker_distance_unknown)
-        state.isUserInsidePerimeter == true -> stringResource(
-            R.string.picker_distance_inside,
-            AttendanceFormatters.distance(distance),
-            state.radiusMeters.toInt(),
-        )
-
-        else -> stringResource(
-            R.string.picker_distance_outside,
-            AttendanceFormatters.distance(distance),
-            state.radiusMeters.toInt(),
-        )
     }
 }
 

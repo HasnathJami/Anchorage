@@ -5,6 +5,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Pinned, not inherited — the mirror of the same block in the Android app.
+// `flutter build apk` resolves its JDK from `flutter config --jdk-dir`, the IDE
+// from its own Gradle JVM setting, and a bare `./gradlew` from JAVA_HOME. Those
+// three drift independently; the toolchain makes all three compile at 17.
+kotlin {
+    jvmToolchain(17)
+}
+
 android {
     namespace = "com.anchorage.anchorage_harbor"
     compileSdk = flutter.compileSdkVersion

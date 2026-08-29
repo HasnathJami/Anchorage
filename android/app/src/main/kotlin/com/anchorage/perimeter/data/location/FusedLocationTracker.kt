@@ -60,6 +60,22 @@ class FusedLocationTracker @Inject constructor(
         preflight()?.let { return flowOf(Outcome.Failure(it)) }
 
         return callbackFlow {
+            // Seed with the position the platform already holds.
+            //
+            // Without this the screen sat on "Acquiring a satellite fix" until
+            // the *next* update arrived, which indoors is tens of seconds and
+            // sometimes never - the provider had a perfectly good fix cached
+            // and nobody asked for it. The user is left unable to tell a slow
+            // GPS from a broken app.
+            //
+            // Safe to show because it is never trusted: `MarkAttendanceUseCase`
+            // takes its own fresh fix through [currentFix] and ignores this
+            // stream entirely, so a stale seed can move the dial but can never
+            // authorise a check-in.
+            runCatching { fusedClient.lastLocation.await() }
+                .getOrNull()
+                ?.let { trySend(Outcome.Success(it.toFix())) }
+
             val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMillis)
                 .setMinUpdateIntervalMillis(intervalMillis / 2)
                 .setWaitForAccurateLocation(false)

@@ -100,6 +100,15 @@ data class AnchorageColors(
     val cautionText: Color = Palette.Amber600,
     val cautionContainer: Color = Palette.Amber050,
 
+    /**
+     * The dropped pin, and the one place red does not mean "wrong".
+     *
+     * Red reads as *marker* on a map the way it reads as *error* in a form -
+     * decades of paper maps and every mapping app since have trained it - and
+     * the picker has no failure state left for it to be confused with.
+     */
+    val mapMarker: Color = Palette.Red500,
+
     val mapLand: Color = Palette.MapLand,
     val mapPark: Color = Palette.MapPark,
     val mapParkAlt: Color = Palette.MapParkAlt,
