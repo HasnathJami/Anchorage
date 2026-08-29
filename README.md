@@ -115,7 +115,7 @@ Room 2.8.4 · DataStore 1.1.7 · Play Services Location 21.4.0 · minSdk 26 · t
 
 ## Task 2 — Anchorage Harbor (Flutter)
 
-Two screens: `CameraPreviewScreen` and the Upload Manager.
+Two screens: `CameraPreviewPage` and `UploadManagerPage`.
 
 ### What the brief asked for, and where it lives
 
@@ -125,11 +125,12 @@ Two screens: `CameraPreviewScreen` and the Upload Manager.
 | Pinch-to-zoom | `CameraPinchStarted` / `CameraPinchZoomed`, anchored to the zoom the gesture began at |
 | Zoom slider | `VerticalZoomSlider` — hand-built, because a rotated Material `Slider` inverts its own drag axis |
 | Rounded zoom buttons (0.5x, 1x, 2x) | `ZoomStopSelector` over the `ZoomLadder` policy — see [Why the zoom buttons are ratios, not cameras](#why-the-zoom-buttons-are-ratios-not-cameras) |
-| Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle` — a ring, an AE/AF padlock and a brightness slider, shown optimistically and cleared on a dwell timer |
+| Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle` — a ring cut at twelve o'clock with an AE/AF padlock sitting in the gap, plus a brightness slider. Shown optimistically and cleared on a dwell timer. The tap is mapped through `PreviewCrop` first — see [Where a tap actually lands](#where-a-tap-actually-lands) |
 | Batch capture with a "Pending Uploads" list | `CaptureBatch` → `BatchReviewSheet` → `EnqueueBatch` → `UploadManagerPage` |
 | Background worker monitoring connectivity | `WorkManagerScheduler` + `syncCallbackDispatcher` |
 | Images stay queued on failure | SQLite-backed `UploadQueueRepositoryImpl`; nothing leaves the queue until the server acknowledges it |
-| Automatic retry on a stable connection, no user action | `ConnectivityMonitor` (with a settle window) → `UploadManagerBloc` → `ProcessUploadQueue` |
+| Automatic retry on a stable connection, no user action | `ConnectivityMonitor` (with a settle window) → `UploadManagerBloc` → `ProcessUploadQueue`. Six triggers, not one — see [What actually starts a sweep](#what-actually-starts-a-sweep) |
+| Low bandwidth handled, not just "offline" | `BandwidthPolicy` — throughput is **measured** from the bytes moving, because the OS reports a transport and never a speed |
 | No API available — mock success and failure | `MockUploadApi` (working transport) + `http_upload_api.dart` (real transport, fully written and commented out) |
 
 ### The camera screen, control by control
@@ -142,12 +143,12 @@ Read top to bottom, exactly as the reference design is laid out.
 | **Flash**, top right | Cycles off → auto → on → torch. The *glyph* changes with the mode, so the state is never carried by colour alone. The torch has an idle deadline so a pocketed phone does not cook its own LED. |
 | **⚙**, top right | Opens `CameraSettingsSheet`: a rule-of-thirds grid, the mock-transport switch, and a route to the Upload Manager. Flash is deliberately absent — it lives on the top bar, and one setting with two controls is one control too many. |
 | **Viewfinder** | Tap to focus *and* meter exposure — tapping a dark corner and getting a sharp but unreadable frame is not what the gesture means. Pinch to zoom, anchored to where the gesture started. See [The focus reticle](#the-focus-reticle-lock-and-brightness). |
-| **Vertical slider**, right edge | Absolute zoom across the offered band, labelled at both ends. Drag up zooms in. |
+| **Vertical slider**, right edge | Absolute zoom across the offered band, labelled at both ends, and the band spans **every rear camera** rather than the open one. Drag up zooms in. |
 | **0.5 / 1 / 2**, above the shutter | Quick zoom. The selected pill reads the *live* value (`1.7x`) whenever the zoom sits between stops. |
 | **Thumbnail + badge**, bottom left | Opens `BatchReviewSheet` — the shots that have **not** been handed over yet, where a blurred frame can still be dropped for free. With an empty batch it goes to the Upload Manager instead. |
 | **Shutter** | One photograph per completed capture; the event is `droppable`, so hammering the button cannot queue twelve. |
 | **Flip**, bottom right | Front ⇄ rear. |
-| **UPLOAD BATCH (n)** | Hands the batch to the sync engine and starts a fresh one. With nothing captured it reads `UPLOAD MANAGER` and goes there, rather than sitting grey through the whole of a first run. |
+| **UPLOAD BATCH (n)** | Hands the batch to the sync engine and starts a fresh one, confirmed by a toast across the **top** of the screen — `SnackBar` only anchors to the bottom, and on a camera the bottom edge is the shutter the user is about to press again. With nothing captured it reads `UPLOAD MANAGER` and goes there, rather than sitting grey through the whole of a first run. |
 
 The thumbnail, shutter and lens-flip button share one centre line, and the shutter is centred
 on the screen rather than merely spaced evenly between two neighbours of different widths.
@@ -158,12 +159,18 @@ Tapping the viewfinder does not just focus. It places a reticle modelled on the 
 camera apps — the familiarity *is* the feature, because nobody reads a manual for a
 viewfinder:
 
-* **A ring** marks where the sensor is metering. Non-interactive, so a tap inside it
-  re-meters there rather than being swallowed.
-* **A padlock** on the ring at twelve o'clock holds focus *and* exposure. Open by default,
-  closed while locked. The two are locked together on purpose: every camera app presents this
-  as one control, because the situation it exists for is one situation — *I have framed this,
-  stop changing it.*
+* **A ring** marks where the sensor is metering, **cut at twelve o'clock** for the padlock to
+  sit in. Every platform camera app cuts the ring rather than drawing the lock on top of the
+  line, and the reason is legibility: a stroke running through the middle of a padlock reads
+  as a broken circle with something stuck to it, not as a badge on a ring. The gap is derived
+  from the glyph rather than typed in, so the two cannot drift apart. The ring is
+  non-interactive, so a tap inside it re-meters there rather than being swallowed.
+* **A padlock** in that gap holds focus *and* exposure. Open by default, closed while locked.
+  The two are locked together on purpose: every camera app presents this as one control,
+  because the situation it exists for is one situation — *I have framed this, stop changing
+  it.* A lens switch clears the lock, because `selectLens` disposes the controller and a
+  fresh one starts at auto metering — a closed padlock over a sensor that is metering freely
+  tells the user something untrue.
 * **A brightness slider** beneath — a sun on a track — sets exposure compensation for this
   metering point.
 
@@ -198,20 +205,67 @@ The app closes with `SystemNavigator.pop()`, not `exit(0)`: it asks the platform
 the activity so Flutter and the plugins shut down in order. Killing the process outright is
 how a half-written SQLite transaction becomes a corrupted queue.
 
-#### The zoom band: 0.5x – 8x
+#### Where a tap actually lands
 
-The controls are designed around 0.5x – 8x, and `ZoomRange` intersects that with what the
-open sensor will admit:
+The preview is painted to **cover** the screen, which means a tap and the point it names on
+the sensor are *not the same point*. A 3:4 preview covering a 9:20 phone is half again too
+wide, so about 40% of the sensor's width never reaches the glass. Handing viewport
+coordinates to `setFocusPoint` focuses somewhere the user did not touch, and the error grows
+the further from centre they tap — on a tall phone, that is most of the frame.
+
+`PreviewCrop` maps the tap **in** to sensor space and the reticle back **out** again, and the
+round trip is asserted to be exact, because the ring has to land under the finger. When the
+controller has not reported a preview size yet the crop degrades to the identity rather than
+guessing: a fabricated shape would map taps confidently and wrongly.
+
+The order of the platform calls matters just as much. `setFocusMode` goes **first** (a sensor
+left locked by a previous tap drops a new point, and CameraX treats a mode change as "cancel
+the run in progress"), then exposure, then focus — so the focus run is the one left standing.
+
+#### The zoom band: 0.5x – 8x, across every camera
+
+"Zoom" means two different numbers, and conflating them is what put a **1x – 8x** slider on a
+phone whose camera app offers 0.5x:
+
+* **Sensor zoom** is what `setZoomLevel` takes. On a Galaxy A54 *every* camera reports
+  1.0 – 8.0 for it, the ultra-wide included — on that sensor 1.0 already **is** the wide view.
+* **Effective zoom** is what the user means by "0.5x": the field of view relative to the main
+  camera. It is the lens's own factor multiplied by its sensor zoom.
+
+Everything the user touches — the slider, its end labels, the quick-zoom pills — is in
+effective zoom, and `ZoomSpan` is the one place that converts back. It is also the only thing
+that decides another camera has to be opened.
 
 * **The 8x ceiling is a product decision.** Plenty of phones report 10x or 30x; past roughly
   8x they are upscaling, not zooming. Those extra numbers also cost something real — mapping
   1x–30x onto the reference design's ~230 dp slider makes the 1x–3x band people actually use
   about twenty pixels tall.
-* **The 0.5x floor is the hardware's to grant.** You cannot see wider than the lens, so a
-  sensor that starts at 1x is offered from 1x. Most modern Androids publish a rear camera
-  whose range already reaches 0.5; where instead the ultra-wide is a *separate* camera, the
-  quick-zoom row still offers 0.5 and tapping it switches to that camera — the row is built
-  from what the **device** can reach, not just the sensor that happens to be open.
+* **The 0.5x floor is the hardware's to grant**, but "the hardware" means the *device*, not
+  the sensor that happens to be open. Where the ultra-wide is published as a separate camera,
+  reaching 0.5x means opening it.
+
+##### Opening another camera without the screen flashing
+
+Opening a sensor blanks the preview for a few hundred milliseconds. A pinch emits dozens of
+values a second, so acting on every one that crossed 1.0x reopened the camera over and over —
+and because the zoom handlers are `restartable`, a `selectLens` could be torn down half way,
+leaving the app with no camera and a spinner. Three rules fixed it:
+
+1. **A hand-over never happens mid-gesture.** While a pinch or a slider drag is in flight the
+   zoom travels as far as the open camera honestly can, and the value the finger actually
+   asked for is remembered. The camera opens once, when the fingers lift — with a settle
+   timer as a backstop for gestures the system cancels without an end event. A tap on a pill
+   is a decision rather than a drag, and does not wait.
+2. **The switch is its own `sequential` event.** `CameraZoomHandoverRequested` cannot be
+   cancelled by the next pinch value.
+3. **A rear-to-rear hand-over is not a cold start.** `isSwitchingLens` keeps the full-screen
+   loading state off the chrome for it.
+
+`ZoomSpan` also holds two rules worth stating outright. It switches *wider* automatically but
+never *longer*: a rear camera's role is inferred from the order the platform lists it in, and
+on this very phone the third rear camera is a **macro** that the inference calls a 2x
+telephoto. And the front camera is a span of one — it is not on the rear ladder, and a pinch
+on a selfie must never open a camera pointing the other way.
 
 #### Why the zoom buttons are ratios, not cameras
 
@@ -236,6 +290,19 @@ actually holds, the reference design's most recognisable control rendered as emp
 * For the minority of devices that publish each rear sensor separately, tapping a ratio the
   open camera cannot reach opens the rear camera that can, then sets the zoom.
 
+### The Upload Manager, control by control
+
+| Control | Behaviour |
+| --- | --- |
+| **Title row** | The screen name and the link chip — three states, not two, because "connected" and "usable" are different answers. A small spinner appears while a sweep is running. **No back arrow:** the system back gesture already leaves the screen and the bottom of the page carries the way back to the camera, so a second, weaker exit in the corner was two answers to one question. |
+| **Batch sync progress** | Byte-weighted, so a 4 MB file does not count the same as a 200 KB one. `PAUSE ALL` holds everything that exists when it is tapped; `RESUME ALL` releases it **and** re-arms any row that had given up. |
+| **Pending uploads** | One row per queued photograph, each naming its own state in the reference's own words — `IN QUEUE`, `UPLOADING - 45%`, `WAITING FOR CONNECTION`, `RETRYING... (ATTEMPT 2/3)`, `SYNCED`, `FAILED`. A parked row says what it is waiting for. Per-row retry and discard sit behind the row itself. |
+| **CLEAR SYNCED** | Housekeeping — forgets the delivered rows only. |
+| **START NEW UPLOAD BATCH** | Back to the camera, which is what someone finished with this screen actually wants. |
+
+Opening this screen re-arms every recoverable failure and sweeps, so a queue that gave up
+while the cause was being fixed does not need a row-by-row retry.
+
 ### The sync engine in six rules
 
 `ProcessUploadQueue` is the heart of the app. Every rule below has a test that fails if the
@@ -246,9 +313,13 @@ rule is removed.
    is requested from the OS.
 2. **One task at a time.** Parallel uploads on a weak link starve each other.
 3. **Connectivity failures do not consume attempts.** Losing signal is a pause, not a
-   failure. Only real transport or server errors increment the counter.
-4. **Unretryable failures stop immediately.** A 400 or a missing file fails once and is
-   shown to the user rather than looped.
+   failure. Only real transport or server errors increment the counter. That includes a link
+   that is **up but too slow to be useful** — see [Low bandwidth is measured, not
+   scripted](#low-bandwidth-is-measured-not-scripted).
+4. **Unretryable failures stop immediately.** A missing file fails once and is shown to the
+   user rather than looped. The budget is **3 attempts**, and it is only ever spent on
+   failures that were the task's own — by the third identical rejection, the fourth is not
+   going to be the one that works.
 5. **The queue is the source of truth throughout.** Every transition is written before the
    next task starts, so process death mid-sweep loses at most one in-flight transfer.
 6. **A task is claimed before it is uploaded.** Two sweeps genuinely race — the Bloc sweeps
@@ -271,13 +342,48 @@ engine that is correct but only runs every fifteen minutes looks broken:
 | **The link becomes stable** | `UploadManagerBloc` — the brief's requirement in one line: no button, no user action |
 | **New work is queued** | `UploadManagerBloc` — tapping `UPLOAD BATCH` on an already-stable link used to upload nothing until WorkManager next woke; the rows just sat at `IN QUEUE` |
 | **A backoff elapses** | `UploadManagerBloc` — a retry scheduled four seconds out had no foreground trigger at all, so the row read `RETRYING...` and then did nothing for fifteen minutes |
+| **Work is parked and the link says it is usable** | `UploadManagerBloc` — "the link became stable" is a *transition*, and a weak signal that reports itself connected the whole time never produces one. The row sat at `WAITING FOR CONNECTION` on a phone with four bars. Backs off from 20 s to a 5-minute ceiling while nothing gets through, so a captive portal cannot keep the phone warm |
+| **The Upload Manager is opened** | `UploadManagerOpened` — and this one also **re-arms the rows that had given up** |
 | OS wake-up, app closed | `WorkManagerScheduler` — a one-shot constrained to `NetworkType.connected`, plus a 15-minute periodic safety net |
 
-Only the first two existed at first. The last two are what make the engine look as resilient
-as it is, and each has a test that fails without it. The third and fourth needed a matching
-fix underneath: `claim` and `requeueStalled` now republish the queue **only when they change
-it**, because the reaper runs at the top of every sweep and an unconditional notification
-would have put the engine in a permanent sweep-notify-sweep loop.
+Only the first two existed at first. The rest are what make the engine look as resilient as
+it is, and each has a test that fails without it. Two needed a matching fix underneath:
+`claim` and `requeueStalled` now republish the queue **only when they change it**, because
+the reaper runs at the top of every sweep and an unconditional notification would have put
+the engine in a permanent sweep-notify-sweep loop.
+
+**Coming back to a queue that gave up.** An attempt ceiling means some rows end at `FAILED`,
+and that is the point of having one — but *terminal* was being read as *permanent*. Set the
+mock to `FAILED`, watch the rows climb to `REJECTED BY SERVER`, set it back to `SUCCESS`, and
+nothing happened until each row was retried by hand. Two things now say "try all of that
+again", and both are a person deliberately asking: **opening the Upload Manager**, and
+**`RESUME ALL`** — which reads as *get on with all of it*, so releasing only the paused rows
+was the literal reading of the button and the wrong one. Both grant the same fresh budget a
+per-row retry does. A row whose **file is gone** is never re-armed, and a **paused** row is
+never quietly released.
+
+`UploadManagerOpened` is separate from app launch because the Bloc is hoisted above the
+navigator — the engine keeps working while the user is on the camera, so the app starts once
+and the screen opens many times over that lifetime.
+
+### Low bandwidth is measured, not scripted
+
+The operating system will tell you there is a transport. It will never tell you it is
+useless. A phone on one bar, or on a hotel Wi-Fi behind a saturated uplink, is `connected` by
+every signal Android exposes while a 300 KB photograph takes four minutes and usually dies
+before it lands.
+
+So throughput is **measured** from the bytes actually moving, and `BandwidthPolicy` holds the
+one rule that reads it: stay under 24 KB/s for six *continuous* seconds and the transfer is
+abandoned and the row parked. Three details are load-bearing:
+
+* **The grace window measures a continuous slow spell.** One good tick clears it. Slow-start,
+  a lift and a Wi-Fi roam all produce a second or two of nothing on a link that is about to
+  be fine.
+* **It parks rather than failing.** The file is fine and the server is fine; the network is
+  not. Spending a retry attempt on that burns the budget the task needs later.
+* **The watchdog lives in the use case, not the transport**, so it applies to the mock and to
+  a real HTTP client alike, and is asserted on the JVM rather than discovered on a train.
 
 Retries use **exponential backoff with full jitter** (4 s → 8 s → 16 s …, capped at 15 min,
 randomised across `[0, computed]`). Jitter matters: twelve photographs fail together when a
@@ -288,15 +394,55 @@ tunnel swallows the signal, and without it all twelve wake at the same milliseco
 The brief states no API is available. Anchorage Harbor answers that in both of the ways the
 brief permits:
 
-* **`MockUploadApi`** is a *working* transport, not a stub. It streams realistic progress at
-  a configurable throughput, fails at a configurable point, and returns the full failure
-  taxonomy. A switcher inside the camera's **⚙ settings sheet** offers two outcomes named
-  for what the *user* would experience rather than for a status code — success, low
-  bandwidth, no internet, and server error — and changes the behaviour live, so every path can be demonstrated on a real device in seconds. It sits
-  there rather than on the Upload Manager because the reference design's bottom bar carries
-  one button and nothing else.
+* **`MockUploadApi`** is a *working* transport, not a stub. It streams realistic progress,
+  reports throughput it has actually **measured** rather than the rate it was configured
+  with, and returns the full failure taxonomy.
+
+  A switcher inside the camera's **⚙ settings sheet** offers exactly **two** outcomes:
+  `SUCCESS` and `FAILED`. Two, because a server has two things to say about an upload — it
+  took the file, or it did not. The switcher used to carry `LOW BANDWIDTH` and `NO INTERNET`
+  as well, and dropping them made the demonstration stronger rather than weaker: those are
+  conditions of the *link*, and a scripted link proves nothing about an app's resilience — it
+  proves the script works. Both are now read from the device, so turning off mobile data
+  parks the rows with no attempt spent and turning it back on drains them.
+
+  `FAILED` is a retryable 500, so `RetryPolicy` stays the only thing that decides when to
+  stop: the attempt counter climbs with jittered backoff and the row lands at `FAILED` with a
+  manual retry, however good the link is. The switcher sits in the settings sheet rather than
+  on the Upload Manager because the reference design's bottom bar carries one button and
+  nothing else.
 * **`http_upload_api.dart`** is the production HTTP implementation, written out in full and
   commented out. Swapping them is one line in `injector.dart`.
+
+### Holding up on hardware that is not the development phone
+
+A design built against one handset breaks quietly on the next one, so two classes of failure
+are guarded by tests rather than by looking.
+
+**Layout.** `device_matrix_test.dart` lays both screens out across four device shapes and two
+text scales — 24 cases — and asserts there is no overflow and that the shutter and the call
+to action stay on screen. It found two live defects: the `PENDING UPLOADS (n)` / `CLEAR
+SYNCED` row overflowed **every phone 360 dp or narrower at normal text size**, and the upload
+call to action overflowed at 1.3x type. Both are eyebrow type, which carries +1.6 of tracking
+and is tighter than it looks. The rule that came out of it: any text sitting beside a
+fixed-size control is `Flexible` with an ellipsis, and the label yields before the control or
+the read-out does.
+
+**Memory.** Every `Image.file` carries a `cacheWidth`. These files are camera captures, and
+`Image.file` decodes at the file's own resolution unless told otherwise: a 12 MP JPEG becomes
+about 48 MB of bitmap whether it is painted across the screen or into a 54 dp square. The
+Upload Manager draws one per row and the review sheet one per shot, so a dozen frames was on
+the order of half a gigabyte of thumbnails — an out-of-memory kill on a mid-range phone, and
+constant decode-and-evict churn against Flutter's 100 MB image cache on a good one, which is
+the app getting hot in the user's hand. `thumbnailCacheWidth` sizes the decode to the box it
+is drawn into. **Never add an `Image.file` without one.**
+
+The same instinct applies at the platform boundary. `takePicture` is bounded by a timeout,
+because a wedged camera service does not return an error — it simply never answers, and the
+Bloc holds `isCapturing` until it does, which turns a hung call into a shutter that is dead
+for the rest of the session. `CameraPluginAdapter` catches everything rather than only
+`CameraException`, because vendor camera stacks also throw `PlatformException` and bare
+`StateError`, and this class's whole contract is that it never throws.
 
 ### Stack
 
@@ -343,7 +489,7 @@ earlier `kotlin-jvm` module boundary was traded for it.
 | Perimeter | `AttendanceViewModel` | Turns `AttendanceIntent` into use-case calls and projects `AttendanceStatus` onto `AttendanceUiState`; holds no geofence or window logic of its own. |
 | Perimeter | `AttendanceHistoryViewModel` | Read-only projection of the attendance log. |
 | Harbor | `CameraBloc` | Camera lifecycle, permissions, zoom/focus/lens, capture and batch hand-off. Shutter events are `droppable`, zoom events `restartable`. |
-| Harbor | `UploadManagerBloc` | Watches the queue and the link; sweeps the queue the moment the link becomes stable. Hoisted above the navigator so sync continues while the user is on the camera screen. |
+| Harbor | `UploadManagerBloc` | Watches the queue and the link; sweeps the queue the moment the link becomes stable. Hoisted above the navigator so sync continues while the user is on the camera screen — which is why "the screen was opened" is a separate event from "the app started". |
 
 Both apps share two primitives worth naming:
 
@@ -493,18 +639,18 @@ over pure domain code, with fakes standing in for hardware.
 | Suite | Tests | What it covers |
 | --- | --- | --- |
 | `android core/common/` | 6 | `Outcome` combinators |
-| `android domain/` | 48 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases |
+| `android domain/` | 57 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
-| `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
+| `android presentation/` | 50 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **347** | |
+| **Total** | **457** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew test        # 129 tests
+cd android  && ./gradlew testDebugUnitTest   # 136 tests
 cd ../flutter && flutter test        # 321 tests
 ```
 

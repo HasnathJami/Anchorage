@@ -735,7 +735,10 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     emit(state.copyWith(isCapturing: true, clearNotice: true));
 
     final Result<CapturedShot> result =
-        await _camera.capture(zoomLevel: state.settings.zoom);
+        // The zoom recorded against the shot is the *effective* one - what the
+        // user was looking at and what the pill said. The open sensor's own
+        // number means nothing on an ultra-wide, where 1.0 is the user's 0.5x.
+        await _camera.capture(zoomLevel: state.effectiveZoom);
 
     result.fold(
       (CapturedShot shot) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show Offset;
 
@@ -289,6 +290,12 @@ class CameraPluginAdapter implements CameraPort {
     );
   }
 
+  /// How long a single shot may take before the app stops waiting for it.
+  ///
+  /// Generous: a night-mode exposure on a mid-range phone genuinely takes
+  /// seconds. This is not a performance budget, it is a deadlock guard.
+  static const Duration captureTimeout = Duration(seconds: 20);
+
   @override
   Future<Result<CapturedShot>> capture({required double zoomLevel}) async {
     final CameraController? controller = _controller;
@@ -303,7 +310,14 @@ class CameraPluginAdapter implements CameraPort {
     }
 
     try {
-      final XFile file = await controller.takePicture();
+      // **Bounded.** `takePicture` crosses into the vendor camera stack, and a
+      // wedged camera service does not answer - it simply never returns. The
+      // Bloc holds `isCapturing` until this completes, so a hang there does
+      // not fail the shot, it disables the shutter for the rest of the
+      // session. A dead shutter with no message is the worst outcome this
+      // screen has; a timeout at least says so and lets the user try again.
+      final XFile file =
+          await controller.takePicture().timeout(captureTimeout);
       final Directory directory = await _captureDirectory();
 
       final String id = _uuid.v4();
@@ -328,6 +342,8 @@ class CameraPluginAdapter implements CameraPort {
           zoomLevel: zoomLevel,
         ),
       );
+    } on TimeoutException {
+      return const Result<CapturedShot>.failure(TimeoutFailure());
     } on CameraException catch (error, stackTrace) {
       return Result<CapturedShot>.failure(_translate(error, 'capture', stackTrace));
     } on FileSystemException catch (error) {
