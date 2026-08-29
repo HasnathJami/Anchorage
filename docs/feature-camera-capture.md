@@ -15,23 +15,30 @@ A direct transcription of the reference design.
 
 ```
 ┌──────────────────────────────────────────┐
-│ (✕)                          ⚡    ⚙      │   close · flash · upload manager
-│                  VISUAL                  │
+│ (✕)                          ⚡    ⚙      │   close · flash · settings sheet
+│              BATCH CAPTURE               │   or "BATCH · 12 CAPTURED"
 │                                          │
 │                                    ┌──┐  │
-│                                    │3x│  │   vertical zoom slider
+│                                    │8x│  │   vertical zoom slider
 │           [ live preview ]         │▓ │  │   (labels inside the track)
 │                                    │● │  │
 │                                    │1x│  │
 │                                    └──┘  │
-│              (0.5) (1x) (2)              │   lens pills — real cameras only
-│                                          │
+│              (0.5) (1x) (2)              │   quick-zoom stops — from the
+│                                          │   sensor's real zoom range
 │   ┌──┐(12)        ◯◯◯          (⟳)      │   thumbnail · shutter · flip
-│   └──┘         LIVE VIEW                 │
+│   └──┘                                   │
 │                                          │
 │   [   ⚓  UPLOAD BATCH (12)          ]   │
 └──────────────────────────────────────────┘
 ```
+
+The reference render carries the words `VISUAL` and `LIVE VIEW` in those two caption slots.
+They are artefacts of how the reference image was produced, not labels with meaning, and
+transcribing them literally produced a camera that announced "LIVE VIEW" across its own
+shutter button. The slots are kept — the layout is the reference's — and filled with the one
+fact about this camera that differs from every other camera the user has held: this frame is
+joining a batch, and here is how large that batch is.
 
 Chrome is translucent rather than solid, so the frame being composed stays visible
 underneath — a solid button on a camera hides exactly the part of the shot it sits on.
@@ -44,7 +51,7 @@ underneath — a solid button on a camera hides exactly the part of the shot it 
 | --- | --- | --- |
 | Pinch | `CameraPinchStarted` → `CameraPinchZoomed(scale)` | `baseZoom × scale` |
 | Slider | `CameraZoomChanged(absolute)` | Absolute |
-| Lens pill | `CameraLensSelected(lens)` | Re-opens the sensor |
+| Quick-zoom stop | `CameraZoomStopSelected(stop)` | Absolute; opens another rear camera first, but only if this one cannot reach the ratio |
 
 ### Pinch is anchored to the gesture's origin
 
@@ -70,19 +77,52 @@ A `RotatedBox`-wrapped Material `Slider` inverts its own gesture axis — draggi
 decreases the value — and cannot place labels inside the track the way the reference does.
 `VerticalZoomSlider` is ~90 lines of `GestureDetector` + `LayoutBuilder`, and behaves.
 
-### Lens pills come from the device's real cameras
+### The quick-zoom stops are ratios, not cameras
 
-Hard-coding `0.5 / 1 / 2` gives a single-lens budget phone three buttons, two of which do
-nothing.
+This is the part that was wrong, and it is worth writing down properly because the wrong
+version is the obvious one.
 
-`_describeLenses` enumerates the actual back cameras. The `camera` plugin does not expose
-focal lengths, so the mapping uses the platform's ordering convention (on both Android and
-iOS the first back camera is the main one, and additional back cameras are the ultra-wide and
-telephoto), then sorts into optical order for display.
+The first implementation built the `0.5 / 1 / 2` row from the physical back cameras
+`availableCameras()` reports, and rendered nothing when there were fewer than two of them —
+on the reasonable theory that a lone pill which does nothing when tapped is worse than no
+row. Both halves of that reasoning are sound. The premise is not.
 
-A device with one back camera renders **no selector at all** — `CameraState.selectableLenses`
-returns fewer than two entries and `LensSelector` collapses. The front camera is excluded from
-the pills and reached from the flip button, matching the reference.
+`availableCameras()` reports **logical** cameras. A phone with an ultra-wide, a main and a
+telephoto typically publishes *one* rear camera whose zoom range spans all three, and lets
+the platform switch the physical sensor underneath as the zoom crosses a threshold. So the
+count was almost always one, the row collapsed, and the reference design's most recognisable
+control was empty space on nearly every device — including the emulator a reviewer would
+reach for first.
+
+`ZoomLadder.forRange(minZoom:maxZoom:)` builds the row from the sensor's zoom range instead:
+
+* **1x is always present.** It is the frame the user is looking at. A camera whose current
+  framing has no button is disorienting, even on hardware that cannot zoom at all.
+* **A wide button is earned, not assumed.** It appears only when the reported minimum is
+  genuinely below 1x (`ultraWideBelow = 0.95`, because devices report 0.5, 0.6 and
+  0.5999999 for the same physical lens), and it targets that exact minimum. A 0.6x
+  ultra-wide is honestly labelled `0.6` and the tap lands where the hardware stops instead
+  of being silently clamped.
+* **2x, 3x, 5x, 10x** are offered only up to what the sensor reaches, capped at three
+  buttons — the reference's width, and about as many round targets as a thumb can hit
+  one-handed while the other hand holds the subject.
+* **A garbled range degrades to a bare 1x** rather than to a row of buttons the driver
+  would refuse.
+
+`ZoomStopSelector` then does one thing the old pills did not: when the live zoom sits
+*between* stops, the selected button shows the live value (`1.7x`) instead of its own label.
+That is what the platform camera apps do, and it turns the row from three buttons that lie
+between stops into an always-correct read-out.
+
+**Physical lens switching still exists** for the minority of devices that publish each rear
+sensor separately. `CameraZoomStopSelected` checks whether the open sensor can reach the
+requested ratio; only when it cannot does it look for the rear camera whose native factor is
+closest, open that, and then set the zoom. The front camera is never a candidate — it is
+reached from the flip button, matching the reference.
+
+`CameraPluginAdapter` also **opens at 1x rather than at the sensor's minimum**. On a phone
+whose logical rear camera spans an ultra-wide, the minimum is 0.5, and starting there meant
+the app opened on a distorted wide-angle frame nobody had asked for.
 
 ---
 
@@ -197,6 +237,29 @@ starts a **fresh** batch, so the sync engine and the camera can never mutate the
 The corner thumbnail shows the newest shot with a blue count badge, exactly as in the
 reference.
 
+### The batch review sheet
+
+Tapping the thumbnail opens `BatchReviewSheet`: a grid of the shots that have **not** been
+handed over, where tapping one drops it.
+
+That moment is the whole point. A field operator photographs a site with no signal, ends up
+with fourteen frames, and knows two of them are blurred. Once a batch reaches the queue those
+two are *durable* — retried across reboots, eventually costing real bandwidth on a metered
+link. Dropping them a second earlier costs nothing. `CameraShotDiscarded` had been modelled
+since the first version of this Bloc and was reachable from no UI at all; this is the screen
+it was waiting for.
+
+Discarding deletes the file, not just the list entry. The photograph is on disk the instant
+the shutter fires — that ordering is the app's durability story — so a discard that only
+forgot the entry would leave every rejected frame on the device for good. `CameraPort.discard`
+returns nothing, deliberately: a file that is already gone is the outcome the caller wanted,
+and there is no remedy to offer for an unlink that fails.
+
+The sheet is a modal route, which makes it a *sibling* of the camera page in the navigator
+rather than a descendant — `context.read<CameraBloc>()` inside it would throw. The Bloc is
+handed over explicitly with `BlocProvider.value`, which is also what keeps the grid live: the
+first version passed a snapshot of the batch, and a discarded frame stayed on screen.
+
 ---
 
 ## 6. Declared concurrency
@@ -258,17 +321,29 @@ ceremony. The *logic* stays behind the port; only the pixels reach through.
 
 ## 9. Tests
 
-`camera_bloc_test.dart` — 18 tests:
+`camera_bloc_test.dart` — 32 tests:
 
 | Group | Covers |
 | --- | --- |
 | startup and permissions | already granted; ask then open; soft denial stays askable; permanent denial switches remedy to Settings; no camera degrades |
 | lifecycle | sensor released on background; re-opened on resume; **resume re-checks permission** |
-| zoom | slider value clamped to range; **pinch measured from its origin, not compounded** |
+| flash | the cycle reaches the torch; a fresh controller is set explicitly even to `off`; a chosen mode survives a lens switch; the torch times out; a sensor with no LED falls back once |
+| zoom | slider value clamped to range; **pinch measured from its origin, not compounded**; a zoom that has not moved is never sent to the platform |
+| quick-zoom stops | **a single rear camera that can zoom still gets a row**; a reachable ratio just sets the zoom; an unreachable one opens the rear camera that can |
 | focus | reticle shown and normalised coordinates forwarded; out-of-bounds tap clamped |
-| capture and batching | each press adds one shot; failed capture adds no phantom shot; discard removes; submit hands every shot to the queue and starts a fresh batch; empty batch is a no-op |
-| lens selection | switching re-opens and bumps `previewKey`; front camera excluded from the pills |
+| capture and batching | each press adds one shot; failed capture adds no phantom shot; **a discard leaves the batch *and* the disk**; discarding an unknown id deletes nothing; submit hands every shot to the queue and starts a fresh batch; empty batch is a no-op |
+| lens selection | switching re-opens and bumps `previewKey`; the front camera is never a zoom-stop candidate |
+
+`zoom_stop_test.dart` — 12 tests over the pure `ZoomLadder` policy: which stops each sensor
+range earns, the ultra-wide threshold, the three-button cap, garbled ranges, and which stop is
+lit at a given zoom.
+
+`camera_chrome_test.dart` — 10 widget tests on the controls themselves: the quick-zoom row
+renders and reports taps, the selected pill shows the live zoom between stops, a
+single-stop sensor gets no row, the slider labels both ends and **zooms in when dragged
+upwards**, a sensor that cannot zoom gets no slider, the batch badge appears only with shots,
+and a disabled shutter does not fire.
 
 ```bash
-cd flutter && flutter test test/presentation/capture/
+cd flutter && flutter test test/presentation/capture/ test/domain/zoom_stop_test.dart
 ```

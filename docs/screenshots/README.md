@@ -27,7 +27,7 @@ side-by-side comparison.
 | File | State to capture |
 | --- | --- |
 | `harbor-01-permission.png` | First launch, "Camera access needed" |
-| `harbor-02-camera.png` | Live preview with lens pills, zoom slider and the shutter row **(reference state)** |
+| `harbor-02-camera.png` | Live preview with the quick-zoom stops, zoom slider and the shutter row **(reference state)** |
 | `harbor-03-focus.png` | Mid tap-to-focus, with the yellow reticle visible |
 | `harbor-04-batch.png` | Several shots captured — thumbnail badge showing the count |
 | `harbor-05-uploading.png` | Upload Manager mid-transfer — active row lifted, throughput visible **(reference state)** |

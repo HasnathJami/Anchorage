@@ -1,4 +1,5 @@
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:equatable/equatable.dart';
 
 /// Everything the user (or the OS) can do to the camera screen.
@@ -49,7 +50,7 @@ final class CameraLensSelected extends CameraEvent {
   List<Object?> get props => <Object?>[lens];
 }
 
-/// Absolute zoom, from the slider or a lens pill.
+/// Absolute zoom, from the slider.
 final class CameraZoomChanged extends CameraEvent {
   const CameraZoomChanged(this.zoom);
 
@@ -57,6 +58,40 @@ final class CameraZoomChanged extends CameraEvent {
 
   @override
   List<Object?> get props => <Object?>[zoom];
+}
+
+/// One of the round `0.5 / 1 / 2` buttons was tapped.
+///
+/// Separate from [CameraZoomChanged] because a stop is not merely a zoom
+/// value: if the open sensor cannot reach the requested ratio but another rear
+/// camera can, tapping it has to switch cameras first. The slider can never
+/// ask for something out of range, so it does not carry that cost.
+final class CameraZoomStopSelected extends CameraEvent {
+  const CameraZoomStopSelected(this.stop);
+
+  final ZoomStop stop;
+
+  @override
+  List<Object?> get props => <Object?>[stop];
+}
+
+/// Pick a flash mode outright, rather than cycling to it.
+///
+/// The top-bar button cycles because that is the gesture a camera user
+/// expects; the settings sheet sets a mode directly because a list of options
+/// that you have to tap three times to reach the third one is a bad list.
+final class CameraFlashModeSelected extends CameraEvent {
+  const CameraFlashModeSelected(this.mode);
+
+  final CaptureFlashMode mode;
+
+  @override
+  List<Object?> get props => <Object?>[mode];
+}
+
+/// Show or hide the rule-of-thirds overlay.
+final class CameraGridToggled extends CameraEvent {
+  const CameraGridToggled();
 }
 
 /// Relative zoom from a pinch gesture; [scale] is the gesture's cumulative

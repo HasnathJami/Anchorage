@@ -12,7 +12,7 @@ each clause is satisfied.
 
 ---
 
-## 1. The five rules
+## 1. The six rules
 
 `ProcessUploadQueue` states its rules in its own doc comment. Every one has a test group named
 after it, and every test fails if the rule is removed.
@@ -48,6 +48,44 @@ manual retry control, rather than looped five times with exponential backoff.
 
 Every transition is written before the next task starts, so process death mid-sweep loses at
 most the bytes of one in-flight upload — never the queue itself.
+
+### Rule 6 — A task is claimed before it is uploaded
+
+`ProcessUploadQueue` has always carried a `bool _inFlight` guard against a manual "sync now"
+racing the periodic worker. That guard is real, and it is not enough: the WorkManager sweep
+runs in a **separate isolate** with its own `Injector.configure()`, its own repository and its
+own instance of this use case. Neither side can see the other's flag. Two sweeps could read
+the same eligible row and upload the same photograph twice — which, on a metered link, costs
+a real person real money.
+
+The claim closes it, as one conditional statement:
+
+```sql
+UPDATE upload_tasks
+   SET status = 'uploading', claimed_at = ?, throughput_bps = NULL
+ WHERE id = ?
+   AND status IN ('queued', 'waitingForConnection', 'retrying')
+```
+
+SQLite serialises writers, so of two racing sweeps exactly one sees `updated == 1`. The loser
+sees `0` and moves on without counting an attempt. Doing this as a read-then-write in Dart
+would reintroduce the very window it exists to close.
+
+**The mirror-image hazard is worse, and needs the other half.** A row is marked `uploading`
+before its bytes move. Kill the process at that instant — the user swipes the app away,
+Android reclaims memory — and the row stays `uploading` forever. `uploading` is not an
+eligible state, so `readEligible` never returns it again: that photograph is silently
+stranded, and the queue looks healthy while doing nothing.
+
+So a claim is a **lease**, not a flag. `claimed_at` records when it was taken;
+`updateProgress` renews it, so a 1.2 GB scan crawling over mobile data is never mistaken for
+a corpse. At the top of every sweep, anything claimed longer than `staleClaimAfter`
+(ten minutes) ago goes back to the queue from byte zero — the transport has no resume token,
+so half a file already sent is half a file that has to go again, and claiming otherwise would
+leave the progress bar lying.
+
+Ten minutes is deliberately generous. Reaping too early costs a duplicate upload; reaping too
+late costs one extra sweep of waiting.
 
 ---
 
@@ -222,7 +260,8 @@ CREATE TABLE upload_tasks (
   next_attempt_at    INTEGER,
   failure_kind       TEXT NOT NULL DEFAULT 'none',
   throughput_bps     INTEGER,
-  completed_at       INTEGER
+  completed_at       INTEGER,
+  claimed_at         INTEGER          -- schema v2: the upload lease
 );
 
 CREATE INDEX idx_queue_pickup ON upload_tasks (status, next_attempt_at, created_at);
@@ -288,8 +327,13 @@ Switching is one line in `injector.dart`.
 
 ### The in-app switcher
 
-A row of chips at the bottom of the Upload Manager changes the mock's behaviour at runtime, so
-every path is demonstrable on a real device in seconds. Nothing in the engine reads it.
+A row of chips inside the camera's settings sheet changes the mock's behaviour at runtime,
+so every path is demonstrable on a real device in seconds. Nothing in the engine reads it.
+
+It lives there rather than on the Upload Manager because the reference design's bottom bar
+carries one button and nothing else. The switcher is the one place the presentation layer
+reaches past a port to a concrete adapter, and the architecture test names the file so a
+second such reach cannot appear quietly.
 
 ---
 
@@ -309,6 +353,9 @@ raised panel, `PENDING UPLOADS (n)` list, and a blue call to action pinned to th
 | `SYNCED` | Green with a check |
 | `FAILED` | Red, with per-row **retry** and **discard** controls |
 | `CLEAR SYNCED` | Housekeeping, appears only when there is something to clear |
+| File name | Stem in white, extension muted — the reference's own treatment, and what makes a column of near-identical generated names scannable |
+| Delivered row | Dimmed to 55 %: kept visible, because "did that one actually land?" is the question this screen answers, but not competing with rows that still need something |
+| `START NEW UPLOAD BATCH` | Pops back to the camera, or replaces the route when the Upload Manager is the only one on the stack — otherwise the screen's single call to action would be inert after a process death |
 
 **Progress is measured in bytes, not item count.** One 1.2 GB scan among four thumbnails would
 otherwise read as "80 % done" the moment the thumbnails land. A synced task counts its full
@@ -322,9 +369,9 @@ secondary affordances.
 
 ## 9. Tests
 
-31 tests cover the engine and its domain directly, plus 9 for the Bloc.
+42 tests cover the engine and its domain directly, plus 9 for the Bloc and 8 for its widgets.
 
-**`process_upload_queue_test.dart`** — 22 tests, grouped by rule:
+**`process_upload_queue_test.dart`** — 25 tests, grouped by rule:
 
 | Group | Tests |
 | --- | --- |
@@ -337,9 +384,21 @@ secondary affordances.
 | rescheduling | wake-up requested while work remains; not requested on a clean drain |
 | concurrency | a second sweep mid-flight is a no-op |
 | storage | read failure surfaced, not swallowed |
+| rule 6 — the claim | **a row another sweep won in the meantime is skipped, not sent twice**; **a task abandoned mid-transfer is re-queued, not stranded**; a transfer that is still moving is left alone by the reaper |
 
-**`sync_domain_test.dart`** — 19: backoff ceiling/cap/variance/budget, task progress and
+The claim tests need a repository whose eligibility read is deliberately out of date —
+`_StaleReadRepository` returns every task regardless of status. That is exactly what a *real*
+read looks like from the losing side of a race: correct when it was taken, stale by the time
+the caller acts on it. Nothing but the atomic claim can close that window, so this is the only
+honest way to test it.
+
+**`sync_domain_test.dart`** — 17: backoff ceiling/cap/variance/budget, task progress and
 eligibility, byte-weighted batch progress, failure retryability.
+
+**`upload_widgets_test.dart`** — 8 widget tests: every status line in the reference's own
+words (`WAITING FOR CONNECTION`, `UPLOADING - 45%`, `RETRYING... (ATTEMPT 2/5)`, `SYNCED`),
+the dimmed delivered row, the stem/extension split on the file name, the link chip's three
+states, and the progress header's percentage and pause control.
 
 **`upload_manager_bloc_test.dart`** — 9, including the headline behaviour:
 

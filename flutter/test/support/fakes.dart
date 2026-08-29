@@ -30,6 +30,11 @@ class FakeUploadQueueRepository implements UploadQueueRepository {
   }
 
   final Map<String, UploadTask> _tasks = <String, UploadTask>{};
+
+  /// When each `uploading` row was claimed - the fake's stand-in for the
+  /// `claimed_at` column.
+  final Map<String, DateTime> _claims = <String, DateTime>{};
+
   final StreamController<List<UploadTask>> _controller =
       StreamController<List<UploadTask>>.broadcast();
 
@@ -73,6 +78,40 @@ class FakeUploadQueueRepository implements UploadQueueRepository {
     }
     _emit();
     return const Result<void>.success(null);
+  }
+
+  /// Mirrors the conditional UPDATE in the SQLite implementation: only a task
+  /// still in an eligible state can be claimed, and only once.
+  @override
+  Future<Result<bool>> claim(String id, DateTime claimedAt) async {
+    final UploadTask? task = _tasks[id];
+    if (task == null || !task.status.isEligibleForPickup) {
+      return const Result<bool>.success(false);
+    }
+
+    _tasks[id] = task.copyWith(status: UploadStatus.uploading);
+    _claims[id] = claimedAt;
+    _emit();
+    return const Result<bool>.success(true);
+  }
+
+  @override
+  Future<Result<int>> requeueStalled(DateTime staleBefore) async {
+    int reaped = 0;
+
+    for (final UploadTask task in tasks) {
+      if (task.status != UploadStatus.uploading) continue;
+      final DateTime? claimedAt = _claims[task.id];
+      if (claimedAt != null && !claimedAt.isBefore(staleBefore)) continue;
+
+      _tasks[task.id] =
+          task.copyWith(status: UploadStatus.queued, bytesTransferred: 0);
+      _claims.remove(task.id);
+      reaped++;
+    }
+
+    if (reaped > 0) _emit();
+    return Result<int>.success(reaped);
   }
 
   @override
@@ -444,6 +483,12 @@ class FakeCamera implements CameraPort {
       ),
     );
   }
+
+  /// The shots the Bloc asked to have deleted from disk.
+  final List<String> discarded = <String>[];
+
+  @override
+  Future<void> discard(CapturedShot shot) async => discarded.add(shot.id);
 
   @override
   Future<void> dispose() async => disposeCount++;

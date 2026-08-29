@@ -21,6 +21,10 @@ abstract final class UploadQueueColumns {
   static const String failureKind = 'failure_kind';
   static const String throughput = 'throughput_bps';
   static const String completedAt = 'completed_at';
+
+  /// When the current `uploading` claim was taken. Nullable: a task that has
+  /// never been picked up has no lease.
+  static const String claimedAt = 'claimed_at';
 }
 
 /// Opens (and migrates) the queue database.
@@ -36,7 +40,9 @@ class UploadQueueDatabase {
         _directoryOverride = directoryOverride;
 
   static const String fileName = 'anchorage_harbor_queue.db';
-  static const int schemaVersion = 1;
+
+  /// v2 added [UploadQueueColumns.claimedAt].
+  static const int schemaVersion = 2;
 
   final DatabaseFactory? _factory;
   final String? _directoryOverride;
@@ -56,6 +62,7 @@ class UploadQueueDatabase {
       options: OpenDatabaseOptions(
         version: schemaVersion,
         onCreate: (Database db, int version) => _createSchema(db),
+        onUpgrade: _migrate,
         onConfigure: (Database db) => db.execute('PRAGMA foreign_keys = ON'),
       ),
     );
@@ -85,7 +92,8 @@ class UploadQueueDatabase {
         ${UploadQueueColumns.nextAttemptAt} INTEGER,
         ${UploadQueueColumns.failureKind} TEXT NOT NULL DEFAULT 'none',
         ${UploadQueueColumns.throughput} INTEGER,
-        ${UploadQueueColumns.completedAt} INTEGER
+        ${UploadQueueColumns.completedAt} INTEGER,
+        ${UploadQueueColumns.claimedAt} INTEGER
       )
     ''');
 
@@ -97,5 +105,20 @@ class UploadQueueDatabase {
     await db.execute(
       'CREATE INDEX idx_queue_batch ON ${UploadQueueColumns.table} (${UploadQueueColumns.batchId})',
     );
+  }
+
+  /// Migrations are additive and never destructive.
+  ///
+  /// There is no `onDowngrade: deleteDatabase` escape hatch here on purpose:
+  /// this table holds photographs a user has already been told are safe, and
+  /// dropping it to get past a schema bump would be a data-loss incident, not
+  /// a convenience.
+  Future<void> _migrate(Database db, int from, int to) async {
+    if (from < 2) {
+      await db.execute(
+        'ALTER TABLE ${UploadQueueColumns.table} '
+        'ADD COLUMN ${UploadQueueColumns.claimedAt} INTEGER',
+      );
+    }
   }
 }

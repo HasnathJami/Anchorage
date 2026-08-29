@@ -58,6 +58,20 @@ abstract final class Formatters {
     return '${value.substring(0, head)}$ellipsis${value.substring(value.length - tail)}';
   }
 
+  /// Splits `RAW_DATA_NODE_081.dat` into `('RAW_DATA_NODE_081', '.dat')`.
+  ///
+  /// The reference design sets the stem in bold white and the extension in a
+  /// muted weight, which is what makes a column of near-identical generated
+  /// names scannable: the eye lands on the digits that differ, and the file
+  /// type still reads without competing for attention. A name with no
+  /// extension returns an empty second half rather than a null the caller has
+  /// to remember to handle.
+  static (String stem, String extension) fileNameParts(String value) {
+    final int dot = value.lastIndexOf('.');
+    if (dot <= 0 || dot == value.length - 1) return (value, '');
+    return (value.substring(0, dot), value.substring(dot));
+  }
+
   /// "3/5" for the retry attempt counter.
   static String attempts(int attempt, int maxAttempts) => '$attempt/$maxAttempts';
 }

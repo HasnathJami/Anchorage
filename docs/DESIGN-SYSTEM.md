@@ -164,13 +164,16 @@ Radii are named for the component that owns them:
 | --- | --- |
 | `GlassCircleButton` | Translucent chrome — solid buttons hide the frame being composed |
 | `VerticalZoomSlider` | Hand-built; a rotated Material `Slider` inverts its own gesture axis and cannot put labels inside the track |
-| `LensSelector` | Selected pill inverts to solid white, exactly as in the reference; collapses entirely on a single-lens device |
+| `ZoomStopSelector` | Selected pill inverts to solid white, exactly as in the reference; it shows the *live* zoom (`1.7x`) whenever the value sits between stops, and collapses only when the sensor offers a single stop |
+| `CompositionGrid` | Optional rule-of-thirds guide at 22 % white — guides that shout make people frame to the lines instead of the subject |
 | `ShutterButton` | Disc inside a ring; shrinks while capturing — the cheapest possible tap confirmation that does not obscure the frame |
-| `BatchThumbnail` | Newest shot with a blue count badge; `errorBuilder` for a deleted file |
+| `BatchThumbnail` | Newest shot with a blue count badge; opens the batch review sheet; `errorBuilder` for a deleted file |
+| `BatchReviewSheet` | The shots not yet handed over, as a bounded scrolling grid; tap to drop one |
+| `CameraSettingsSheet` | Flash as an explicit four-way choice, the composition grid, and the mock-transport switch |
 | `FocusReticle` | Yellow square, `easeOutBack`, mirroring the platform camera apps users know |
 | `LinkBadge` | Three states, not two |
 | `BatchProgressHeader` | Byte-weighted bar with the pause control |
-| `UploadTaskTile` | Active row lifted with a blue hairline and inline progress |
+| `UploadTaskTile` | Active row lifted with a blue hairline and inline progress; file-name stem in white with the extension muted; delivered rows dimmed to 55 % |
 | `EmptyQueueView` | The state a well-behaved sync engine spends most of its life in, so it gets more than a blank rectangle |
 
 ---

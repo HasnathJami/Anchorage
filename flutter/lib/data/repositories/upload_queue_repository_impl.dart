@@ -24,20 +24,13 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
   final StreamController<List<UploadTask>> _controller =
       StreamController<List<UploadTask>>.broadcast();
 
-  bool _seeded = false;
-
   @override
   Stream<List<UploadTask>> watchQueue() async* {
-    // The first listener gets the current contents immediately rather than
-    // waiting for the next write - otherwise the Upload Manager opens empty.
-    if (!_seeded) {
-      _seeded = true;
-      final Result<List<UploadTask>> initial = await readQueue();
-      yield initial.valueOrNull ?? const <UploadTask>[];
-    } else {
-      final Result<List<UploadTask>> initial = await readQueue();
-      yield initial.valueOrNull ?? const <UploadTask>[];
-    }
+    // Every listener gets the current contents immediately rather than waiting
+    // for the next write - otherwise the Upload Manager opens empty and only
+    // fills in once something happens to change.
+    final Result<List<UploadTask>> initial = await readQueue();
+    yield initial.valueOrNull ?? const <UploadTask>[];
 
     yield* _controller.stream;
   }
@@ -105,6 +98,73 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
         onError: (Object error, StackTrace _) => StorageReadFailure(cause: error),
       );
 
+  /// The claim, expressed as one conditional UPDATE.
+  ///
+  /// SQLite serialises writers, so exactly one of two racing sweeps sees
+  /// `updated == 1` and the loser sees `0`. Doing this as a read-then-write in
+  /// Dart would reintroduce the very race it exists to close.
+  @override
+  Future<Result<bool>> claim(String id, DateTime claimedAt) async {
+    final Result<bool> result = await guard<bool>(
+      () async {
+        final Database db = await _database.open();
+        final int updated = await db.update(
+          UploadQueueColumns.table,
+          <String, Object?>{
+            UploadQueueColumns.status: UploadStatus.uploading.name,
+            UploadQueueColumns.claimedAt: claimedAt.millisecondsSinceEpoch,
+            UploadQueueColumns.throughput: null,
+          },
+          where: '${UploadQueueColumns.id} = ? '
+              'AND ${UploadQueueColumns.status} IN (?, ?, ?)',
+          whereArgs: <Object?>[
+            id,
+            UploadStatus.queued.name,
+            UploadStatus.waitingForConnection.name,
+            UploadStatus.retrying.name,
+          ],
+        );
+        return updated == 1;
+      },
+      onError: (Object error, StackTrace _) => StorageWriteFailure(cause: error),
+    );
+
+    await _notify();
+    return result;
+  }
+
+  @override
+  Future<Result<int>> requeueStalled(DateTime staleBefore) async {
+    final Result<int> result = await guard<int>(
+      () async {
+        final Database db = await _database.open();
+        return db.update(
+          UploadQueueColumns.table,
+          <String, Object?>{
+            UploadQueueColumns.status: UploadStatus.queued.name,
+            // From byte zero: the transport has no resume token, so half a
+            // file already sent is half a file that has to go again. Claiming
+            // otherwise would leave the progress bar lying.
+            UploadQueueColumns.bytesTransferred: 0,
+            UploadQueueColumns.throughput: null,
+            UploadQueueColumns.claimedAt: null,
+          },
+          where: '${UploadQueueColumns.status} = ? '
+              'AND (${UploadQueueColumns.claimedAt} IS NULL '
+              'OR ${UploadQueueColumns.claimedAt} < ?)',
+          whereArgs: <Object?>[
+            UploadStatus.uploading.name,
+            staleBefore.millisecondsSinceEpoch,
+          ],
+        );
+      },
+      onError: (Object error, StackTrace _) => StorageWriteFailure(cause: error),
+    );
+
+    await _notify();
+    return result;
+  }
+
   @override
   Future<Result<void>> updateStatus(String id, UploadStatus status) =>
       _write(<String, Object?>{UploadQueueColumns.status: status.name}, id);
@@ -120,6 +180,10 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
           UploadQueueColumns.bytesTransferred: bytesTransferred,
           UploadQueueColumns.throughput: throughputBytesPerSecond,
           UploadQueueColumns.status: UploadStatus.uploading.name,
+          // Renews the lease. A 1.2 GB scan on a slow mobile link can
+          // legitimately take longer than the stale-claim window, and a
+          // transfer that is visibly moving must never be reaped as abandoned.
+          UploadQueueColumns.claimedAt: DateTime.now().millisecondsSinceEpoch,
         },
         id,
       );
@@ -132,6 +196,7 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
           UploadQueueColumns.failureKind: UploadFailureKind.none.name,
           UploadQueueColumns.nextAttemptAt: null,
           UploadQueueColumns.throughput: null,
+          UploadQueueColumns.claimedAt: null,
         },
         id,
       );
@@ -151,6 +216,7 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
           UploadQueueColumns.failureKind: failureKind.name,
           UploadQueueColumns.nextAttemptAt: nextAttemptAt?.millisecondsSinceEpoch,
           UploadQueueColumns.throughput: null,
+          UploadQueueColumns.claimedAt: null,
         },
         id,
       );
@@ -174,6 +240,7 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
         values: <String, Object?>{
           UploadQueueColumns.status: UploadStatus.paused.name,
           UploadQueueColumns.throughput: null,
+          UploadQueueColumns.claimedAt: null,
         },
         where: '${UploadQueueColumns.status} NOT IN (?, ?)',
         whereArgs: <Object?>[UploadStatus.synced.name, UploadStatus.failed.name],
@@ -184,6 +251,7 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
         values: <String, Object?>{
           UploadQueueColumns.status: UploadStatus.queued.name,
           UploadQueueColumns.nextAttemptAt: null,
+          UploadQueueColumns.claimedAt: null,
         },
         where: '${UploadQueueColumns.status} = ?',
         whereArgs: <Object?>[UploadStatus.paused.name],
@@ -200,6 +268,7 @@ class UploadQueueRepositoryImpl implements UploadQueueRepository {
           UploadQueueColumns.nextAttemptAt: null,
           UploadQueueColumns.failureKind: UploadFailureKind.none.name,
           UploadQueueColumns.bytesTransferred: 0,
+          UploadQueueColumns.claimedAt: null,
         },
         id,
       );

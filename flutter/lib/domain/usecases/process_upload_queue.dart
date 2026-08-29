@@ -59,6 +59,12 @@ class SyncSweepReport {
 ///  5. **The queue is the source of truth throughout.** Every transition is
 ///     written before the next task starts, so a process death mid-sweep loses
 ///     at most the bytes of one in-flight upload - never the queue itself.
+///  6. **A task is claimed before it is uploaded.** The claim is a conditional
+///     UPDATE, so of two sweeps racing for the same row exactly one proceeds.
+///     The other kind of race - a process killed *holding* a claim - is undone
+///     at the top of every sweep by [staleClaimAfter], which returns abandoned
+///     rows to the queue. Without both halves the queue either uploads a file
+///     twice or stalls on it forever.
 ///
 /// The use case takes no UI dependency at all, which is what allows the very
 /// same code to run from the ViewModel-facing Bloc *and* from the WorkManager
@@ -71,6 +77,7 @@ class ProcessUploadQueue {
     required BackgroundSchedulerPort scheduler,
     RetryPolicy retryPolicy = const RetryPolicy(),
     DateTime Function() clock = DateTime.now,
+    this.staleClaimAfter = const Duration(minutes: 10),
     Random? random,
   })  : _repository = repository,
         _uploader = uploader,
@@ -88,6 +95,16 @@ class ProcessUploadQueue {
   final DateTime Function() _clock;
   final Random _random;
 
+  /// How long a claim may go without progress before the row is treated as
+  /// abandoned.
+  ///
+  /// Generously long. The cost of reaping too early is a duplicate upload; the
+  /// cost of reaping too late is a photograph that waits one extra sweep. Ten
+  /// minutes is comfortably longer than any single file this app produces takes
+  /// on a usable link, and [UploadQueueRepository.updateProgress] renews the
+  /// lease anyway, so only a transfer that has genuinely stopped moving expires.
+  final Duration staleClaimAfter;
+
   /// Guards against a manual "sync now" racing the periodic worker. Without
   /// it the same file could be uploaded twice concurrently.
   bool _inFlight = false;
@@ -97,6 +114,11 @@ class ProcessUploadQueue {
     _inFlight = true;
 
     try {
+      // Before anything else: rescue rows a previous process died holding.
+      // They are `uploading`, which is not an eligible state, so without this
+      // they would never be read again and the photograph would be stranded.
+      await _repository.requeueStalled(_clock().subtract(staleClaimAfter));
+
       final Result<List<UploadTask>> eligible =
           await _repository.readEligible(_clock());
 
@@ -155,8 +177,13 @@ class ProcessUploadQueue {
         continue;
       }
 
+      // Claim before transferring. A `false` here means another sweep - very
+      // likely the WorkManager isolate, which has its own object graph and
+      // cannot see this one's in-flight guard - already owns this row.
+      final Result<bool> claim = await _repository.claim(task.id, _clock());
+      if (claim.valueOrNull != true) continue;
+
       attempted++;
-      await _repository.updateStatus(task.id, UploadStatus.uploading);
 
       final Result<void> result = await _uploader.upload(
         task,

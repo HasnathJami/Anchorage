@@ -1,6 +1,5 @@
+import 'package:anchorage_harbor/app/anchorage_harbor_app.dart';
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
-import 'package:anchorage_harbor/di/injector.dart';
-import 'package:anchorage_harbor/data/datasources/mock_upload_api.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/presentation/sync/bloc/upload_manager_bloc.dart';
 import 'package:anchorage_harbor/presentation/sync/widgets/upload_widgets.dart';
@@ -47,11 +46,11 @@ class UploadManagerPage extends StatelessWidget {
                 Expanded(
                   child: state.isEmpty
                       ? EmptyQueueView(
-                          onCapture: () => Navigator.of(context).maybePop(),
+                          onCapture: () => _startNewBatch(context),
                         )
                       : _QueueList(state: state),
                 ),
-                _BottomBar(state: state),
+                const _BottomBar(),
               ],
             );
           },
@@ -85,11 +84,19 @@ class _TitleRow extends StatelessWidget {
             icon: Icon(Icons.arrow_back, color: colors.textPrimary, size: 20),
             tooltip: 'Back to camera',
           ),
-          Text(
-            'Upload Manager',
-            style: context.harborText.screenTitle.copyWith(color: colors.textPrimary),
+          // Expanded rather than a Spacer: the title, the sweep spinner and the
+          // link chip together fill the width on a 320 dp phone, and at a large
+          // system text scale they exceed it. The title is the part that can
+          // afford to give way; the chip is state the user needs.
+          Expanded(
+            child: Text(
+              'Upload Manager',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  context.harborText.screenTitle.copyWith(color: colors.textPrimary),
+            ),
           ),
-          const Spacer(),
           if (state.isSweeping)
             Padding(
               padding: const EdgeInsets.only(right: HarborSpacing.xs),
@@ -162,10 +169,10 @@ class _QueueList extends StatelessWidget {
   }
 }
 
+/// The bottom call to action, exactly as the reference shows it: one blue
+/// button, nothing else competing with it.
 class _BottomBar extends StatelessWidget {
-  const _BottomBar({required this.state});
-
-  final UploadManagerState state;
+  const _BottomBar();
 
   @override
   Widget build(BuildContext context) {
@@ -182,114 +189,36 @@ class _BottomBar extends StatelessWidget {
         color: colors.backgroundElevated,
         border: Border(top: BorderSide(color: colors.hairline)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          const _MockBehaviourSwitcher(),
-          const SizedBox(height: HarborSpacing.sm),
-          SizedBox(
-            height: 50,
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              style: FilledButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: Colors.white,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(HarborRadius.button),
-                ),
-              ),
-              child: Text('START NEW UPLOAD BATCH', style: context.harborText.button),
+      child: SizedBox(
+        height: 50,
+        width: double.infinity,
+        child: FilledButton(
+          onPressed: () => _startNewBatch(context),
+          style: FilledButton.styleFrom(
+            backgroundColor: colors.primary,
+            foregroundColor: Colors.white,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(HarborRadius.button),
             ),
           ),
-        ],
+          child: Text('START NEW UPLOAD BATCH', style: context.harborText.button),
+        ),
       ),
     );
   }
 }
 
-/// The demonstration control the brief's "no API available" note implies.
+/// Back to the camera, whichever way the user arrived.
 ///
-/// Rather than hard-coding one canned response, the mock transport's behaviour
-/// is switchable at runtime, so a reviewer can watch the engine handle success,
-/// a mid-transfer bandwidth collapse, a total loss of connectivity and a
-/// permanent server rejection - on a real device, in the real UI, in seconds.
-///
-/// It is scoped to debug affordances only: nothing in the engine reads it, and
-/// swapping in the real `HttpUploadApi` makes it inert.
-class _MockBehaviourSwitcher extends StatefulWidget {
-  const _MockBehaviourSwitcher();
-
-  @override
-  State<_MockBehaviourSwitcher> createState() => _MockBehaviourSwitcherState();
-}
-
-class _MockBehaviourSwitcherState extends State<_MockBehaviourSwitcher> {
-  static const Map<MockUploadBehaviour, String> _labels =
-      <MockUploadBehaviour, String>{
-    MockUploadBehaviour.succeed: 'SUCCESS',
-    MockUploadBehaviour.failLowBandwidth: 'LOW BANDWIDTH',
-    MockUploadBehaviour.failNoConnection: 'NO INTERNET',
-    MockUploadBehaviour.failServerRetryable: 'SERVER 503',
-    MockUploadBehaviour.failServerPermanent: 'SERVER 400',
-    MockUploadBehaviour.flaky: 'FLAKY',
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    if (!getIt.isRegistered<MockUploadApi>()) return const SizedBox.shrink();
-
-    final MockUploadApi api = getIt<MockUploadApi>();
-    final HarborColors colors = context.harborColors;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          'MOCK API RESPONSE',
-          style: context.harborText.eyebrow.copyWith(color: colors.textTertiary),
-        ),
-        const SizedBox(height: HarborSpacing.xs),
-        SizedBox(
-          height: 30,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: _labels.entries.map((entry) {
-              final bool selected = api.behaviour == entry.key;
-
-              return Padding(
-                padding: const EdgeInsets.only(right: HarborSpacing.xs),
-                child: GestureDetector(
-                  onTap: () {
-                    api.behaviour = entry.key;
-                    setState(() {});
-                    context
-                        .read<UploadManagerBloc>()
-                        .add(const UploadSyncRequested());
-                  },
-                  child: Container(
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: selected ? colors.primaryGhost : Colors.transparent,
-                      borderRadius: const BorderRadius.all(HarborRadius.pill),
-                      border: Border.all(
-                        color: selected ? colors.primaryBright : colors.hairline,
-                      ),
-                    ),
-                    child: Text(
-                      entry.value,
-                      style: context.harborText.eyebrow.copyWith(
-                        color: selected ? colors.primaryBright : colors.textTertiary,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(growable: false),
-          ),
-        ),
-      ],
-    );
+/// `maybePop` alone is not enough: the Upload Manager is usually pushed on top
+/// of the camera, but it can also be the first route the user lands on after a
+/// process death, and there a pop would do nothing at all - leaving the
+/// screen's only call to action inert.
+void _startNewBatch(BuildContext context) {
+  final NavigatorState navigator = Navigator.of(context);
+  if (navigator.canPop()) {
+    navigator.pop();
+  } else {
+    navigator.pushReplacementNamed(HarborRoutes.camera);
   }
 }

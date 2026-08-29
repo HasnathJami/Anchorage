@@ -55,17 +55,25 @@ for 9 a.m.
 | `domain/geo/` (Mercator) | 9 | Projection round-trips, pole clamping, anti-meridian wrap, and that ground resolution scales with latitude so the 50 m ring keeps its true size |
 | `architecture/` | 6 | The dependency rule itself: domain imports no framework and no outer layer, `core/common/` stays pure, presentation never reaches into data, data never reaches into presentation — plus one test asserting the source walk is not empty, so the other five cannot pass vacuously |
 
-### Anchorage Harbor — 98 tests
+### Anchorage Harbor — 140 tests
 
 | File | Tests | Focus |
 | --- | --- | --- |
-| `process_upload_queue_test.dart` | 22 | The sync engine, grouped by its five rules |
-| `sync_domain_test.dart` | 19 | Retry policy, task state predicates, byte-weighted progress, failure retryability |
-| `camera_bloc_test.dart` | 27 | Startup/permissions, lifecycle, zoom, focus, capture, batching, lens selection, flash |
-| `formatters_test.dart` | 10 | Byte units, throughput, zoom labels, middle-truncated file names |
+| `camera_bloc_test.dart` | 32 | Startup/permissions, lifecycle, zoom, quick-zoom stops, focus, capture, batching, discard, lens selection, flash |
+| `process_upload_queue_test.dart` | 25 | The sync engine, grouped by its six rules |
+| `sync_domain_test.dart` | 17 | Retry policy, task state predicates, byte-weighted progress, failure retryability |
+| `formatters_test.dart` | 16 | Byte units, throughput, zoom labels, middle-truncated file names, the stem/extension split |
+| `zoom_stop_test.dart` | 12 | The zoom ladder: which stops a sensor earns, and which one is lit |
+| `camera_chrome_test.dart` | 10 | The quick-zoom row, the slider's drag axis, the batch badge, the disabled shutter |
 | `upload_manager_bloc_test.dart` | 9 | Queue projection, auto-resume on stable link, pause/resume, retry, discard, clear |
+| `upload_widgets_test.dart` | 8 | Every status line in the reference's own words, the dimmed delivered row, the link chip's three states, the progress header |
 | `flash_policy_test.dart` | 7 | The flash cycle reaching the torch, continuous-draw predicate, what survives an interruption, the torch deadline |
 | `architecture_test.dart` | 4 | The dependency rule: domain on an import allowlist, data ⊘ presentation, presentation ⊘ data (two named seams), plus a scan-reach test |
+
+The two widget suites are new in this pass and deliberately are **not** golden tests. They
+assert the things that actually broke in review — a control that rendered nothing at all, a
+selected state showing the wrong number, a slider whose drag axis inverted. A pixel diff
+would catch none of those any better, and would fail on every font tweak.
 
 ### Instrumentation — 5 tests
 
@@ -205,7 +213,7 @@ open app/build/reports/tests/testDebugUnitTest/index.html
 ```
 
 ```bash
-# Flutter — 98 tests
+# Flutter — 140 tests
 cd flutter
 flutter test
 

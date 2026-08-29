@@ -48,9 +48,10 @@ implementation of the requirement has a specific, demonstrable failure mode on a
 27. [The camera sensor is released on pause](#27-the-sensor-is-released-on-pause)
 28. [Declared Bloc concurrency: droppable shutter, restartable zoom](#28-declared-bloc-concurrency)
 29. [Pinch zoom anchored to the gesture's origin](#29-pinch-zoom-anchored-to-the-gestures-origin)
-30. [Lens pills built from the device's real cameras](#30-lens-pills-from-real-cameras)
+30. [Quick-zoom stops built from the sensor's range, not the camera count](#30-quick-zoom-stops-built-from-the-sensors-range-not-the-camera-count)
+30a. [The batch review sheet — a last free moment to drop a frame](#30a-the-batch-review-sheet--a-last-free-moment-to-drop-a-frame)
 31. [Serial uploads, and a re-check between files](#31-serial-uploads-and-a-re-check-between-files)
-32. [An in-flight guard against duplicate sweeps](#32-an-in-flight-guard)
+32. [An in-flight guard, and the claim that the guard cannot replace](#32-an-in-flight-guard-and-the-claim-that-the-guard-cannot-replace)
 33. [Manual retry resets the attempt budget](#33-manual-retry-resets-the-budget)
 34. [Pause / resume that the engine actually respects](#34-pause-and-resume)
 
@@ -524,15 +525,21 @@ Switching is one line in `injector.dart`.
 
 **Why:** a reviewer should be able to *see* the resilience, not take the README's word for it.
 
-**What Anchorage does:** a row of chips at the bottom of the Upload Manager switches the mock
-transport's behaviour at runtime. Tap **NO INTERNET**, watch rows move to
+**What Anchorage does:** a row of chips inside the camera's **⚙ settings sheet** switches the
+mock transport's behaviour at runtime. Tap **NO INTERNET**, watch rows move to
 `WAITING FOR CONNECTION` with no attempt spent; tap **SERVER 503**, watch
 `RETRYING... (ATTEMPT 2/5)` with jittered backoff; tap **SERVER 400**, watch it fail once and
 offer a manual retry.
 
-Nothing in the engine reads it, and swapping in the real transport makes it inert.
+It began at the bottom of the Upload Manager and moved when that screen was brought back in
+line with the reference design, whose bottom bar carries one button and nothing else. A
+demonstration affordance is not worth a permanent deviation from the design it is meant to
+demonstrate.
 
-**Where:** `_MockBehaviourSwitcher`.
+Nothing in the engine reads it, and swapping in the real transport makes it render nothing at
+all — the widget checks whether `MockUploadApi` is even registered.
+
+**Where:** `CameraSettingsSheet._MockTransportSection`.
 
 ---
 
@@ -613,16 +620,62 @@ compounded"*.
 
 ---
 
-## 30. Lens pills from real cameras
+## 30. Quick-zoom stops built from the sensor's range, not the camera count
 
-**Why:** hard-coding `0.5 / 1 / 2` gives a single-lens budget phone three buttons, two of
-which do nothing.
+**Why:** the obvious implementation of `0.5 / 1 / 2` is one button per rear camera, and the
+obvious guard is "hide the row when there is only one". Both are reasonable. Together they
+made the reference design's most recognisable control render as **empty space on nearly every
+device**, and that is how it shipped in the first version.
 
-**What Anchorage does:** `_describeLenses` enumerates the device's actual back cameras and
-builds one pill per sensor, sorted into optical order. A single-lens device gets no selector
-at all rather than one pill that does nothing when tapped.
+`availableCameras()` reports *logical* cameras. A phone with an ultra-wide, a main and a
+telephoto typically publishes one rear camera whose zoom range spans all three, and lets the
+platform swap the physical sensor underneath as the zoom crosses a threshold. So the count was
+one, the row collapsed, and there was nothing on screen to notice — the failure mode of a
+control that renders nothing is that it looks like a design choice.
 
-**Where:** `CameraPluginAdapter._describeLenses`, `CameraState.selectableLenses`.
+**What Anchorage does:** `ZoomLadder` derives the row from the sensor's real zoom range.
+1x is always present; a wide button is earned only by a minimum genuinely below 1x and targets
+that exact minimum, so a 0.6x ultra-wide is labelled `0.6` and lands where the hardware stops
+instead of being clamped; 2x/3x/5x/10x appear only up to what the sensor reaches, capped at
+three buttons. The selected pill shows the *live* zoom (`1.7x`) whenever the value sits
+between stops, which turns the row into an always-correct read-out.
+
+Physical lens switching survives for the devices that do publish each rear sensor separately:
+`CameraZoomStopSelected` opens the nearest rear camera **only** when the open one cannot reach
+the requested ratio.
+
+The adapter also opens at **1x rather than `minZoom`** — on an ultra-wide-spanning sensor the
+minimum is 0.5, and the app used to open on a distorted wide frame nobody had asked for.
+
+**Where:** `domain/entities/zoom_stop.dart`, `CameraBloc._onZoomStopSelected`,
+`ZoomStopSelector`, `CameraPluginAdapter._open`.
+**Tests:** 12 in `zoom_stop_test.dart`, 3 in `camera_bloc_test.dart`, 4 in
+`camera_chrome_test.dart` — including *"a single rear camera that can zoom still gets a row of
+stops"*, which fails against the old implementation.
+
+---
+
+## 30a. The batch review sheet — a last free moment to drop a frame
+
+**Why:** once a batch reaches the queue it is *durable*. Those photographs are retried across
+reboots and eventually cost real bandwidth on a metered link. A field operator who knows two
+of fourteen frames are blurred should not have to pay to deliver them.
+
+`CameraShotDiscarded` had been modelled since the first version of this Bloc and was reachable
+from no UI whatsoever — a rule with no way to invoke it.
+
+**What Anchorage does:** tapping the corner thumbnail opens `BatchReviewSheet`, a grid of the
+shots that have **not** been handed over, where tapping one drops it. The sheet closes itself
+when the last frame goes, and with an empty batch the thumbnail goes to the Upload Manager
+instead.
+
+Discarding deletes the **file**, not just the list entry. The photograph is on disk the
+instant the shutter fires — that ordering is the app's whole durability story — so a discard
+that only forgot the entry would leave every rejected frame on the device for good.
+
+**Where:** `BatchReviewSheet`, `CameraPort.discard`, `CameraBloc._onShotDiscarded`.
+**Tests:** *"a discarded shot leaves the batch and the disk"*, *"discarding a shot that is not
+in the batch deletes nothing"*.
 
 ---
 
@@ -638,16 +691,43 @@ files. Test: *"the link dropping between files parks the remainder"*.
 
 ---
 
-## 32. An in-flight guard
+## 32. An in-flight guard, and the claim that the guard cannot replace
 
 **Why:** the foreground Bloc and the WorkManager isolate both call the same engine. Without a
 guard, a manual sweep racing the periodic worker uploads the same file twice.
 
-**What Anchorage does:** `ProcessUploadQueue` holds an `_inFlight` flag; a concurrent call
-returns `SyncSweepReport.idle` immediately. Test: *"a second sweep started mid-flight is a
-no-op"*.
+**What Anchorage does — first half:** `ProcessUploadQueue` holds an `_inFlight` flag; a
+concurrent call returns `SyncSweepReport.idle` immediately. Test: *"a second sweep started
+mid-flight is a no-op"*.
 
-**Where:** `ProcessUploadQueue._inFlight`.
+**Why that is not enough:** the flag is an *object field*, and the WorkManager sweep runs in a
+**separate isolate** with its own `Injector.configure()`, its own repository and its own
+instance of this use case. Neither side can see the other's flag. Two sweeps could read the
+same eligible row and send the same photograph twice — on a metered link, that is a real cost
+to a real person.
+
+**Second half — the claim.** A task is now taken with one conditional `UPDATE`
+(`SET status='uploading' … WHERE id=? AND status IN ('queued','waitingForConnection',
+'retrying')`). SQLite serialises writers, so exactly one racing sweep sees `updated == 1`; the
+loser moves on without spending an attempt. A read-then-write in Dart would reintroduce the
+very window it closes.
+
+**Third half — the lease.** The mirror-image hazard is worse. A row is marked `uploading`
+before its bytes move; kill the process at that instant and the row stays `uploading` forever.
+`uploading` is not an eligible state, so `readEligible` never returns it again and that
+photograph is *silently stranded* while the queue looks healthy. So the claim records
+`claimed_at` (schema v2), `updateProgress` renews it — a 1.2 GB scan crawling over mobile data
+is not a corpse — and every sweep begins by returning anything claimed more than ten minutes
+ago to the queue.
+
+Ten minutes is deliberately generous: reaping early costs a duplicate upload, reaping late
+costs one extra sweep of waiting.
+
+**Where:** `ProcessUploadQueue._inFlight`, `UploadQueueRepository.claim` /
+`requeueStalled`, `UploadQueueDatabase` schema v2.
+**Tests:** *"a row another sweep won in the meantime is skipped, not sent twice"*, *"a task
+abandoned mid-transfer is re-queued, not stranded"*, *"a transfer that is still moving is left
+alone by the reaper"*.
 
 ---
 
@@ -727,7 +807,8 @@ Both apps then express those as **semantic roles** (`dangerArc`, `disabledContai
   office"*, because a screen reader announcing "120" and "AWAY" as unrelated nodes is
   useless.
 * **The check-in button announces its gate** ("Mark attendance, locked" / "…, available").
-* Camera chrome, lens pills and the shutter all carry `Semantics` labels.
+* Camera chrome, the quick-zoom stops and the shutter all carry `Semantics` labels; the zoom
+  slider is a `Semantics` slider with its current value.
 * Numeric read-outs use **tabular figures** so digits do not jitter as they update.
 
 ---

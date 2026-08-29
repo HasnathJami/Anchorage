@@ -98,6 +98,23 @@ class CameraPluginAdapter implements CameraPort {
       final double minZoom = await controller.getMinZoomLevel();
       final double maxZoom = await controller.getMaxZoomLevel();
 
+      // Open at 1x, not at the sensor's minimum. On a phone whose logical rear
+      // camera spans an ultra-wide the minimum is 0.5, and starting there means
+      // the preview opens on a distorted wide-angle frame the user did not ask
+      // for while the zoom row lights "0.5". 1x is the frame everyone expects a
+      // camera to open on, so it is set on the hardware here rather than merely
+      // reported.
+      final double openingZoom = 1.0.clamp(minZoom, maxZoom).toDouble();
+      if (openingZoom != minZoom) {
+        // Best-effort: a sensor that refuses the write still previews fine, it
+        // simply stays where the plugin left it.
+        try {
+          await controller.setZoomLevel(openingZoom);
+        } on CameraException {
+          // Deliberately swallowed - see above.
+        }
+      }
+
       _controller = controller;
       _activeLens = lens;
       _minZoom = minZoom;
@@ -108,7 +125,7 @@ class CameraPluginAdapter implements CameraPort {
         CameraSession(
           previewAspectRatio: controller.value.aspectRatio,
           settings: CameraSettings(
-            zoom: minZoom,
+            zoom: openingZoom,
             minZoom: minZoom,
             maxZoom: maxZoom,
             isFrontFacing: description.lensDirection == CameraLensDirection.front,
@@ -226,6 +243,18 @@ class CameraPluginAdapter implements CameraPort {
       return Result<CapturedShot>.failure(_translate(error, 'capture', stackTrace));
     } on FileSystemException catch (error) {
       return Result<CapturedShot>.failure(StorageWriteFailure(cause: error));
+    }
+  }
+
+  @override
+  Future<void> discard(CapturedShot shot) async {
+    try {
+      final File file = File(shot.filePath);
+      if (file.existsSync()) await file.delete();
+    } on FileSystemException {
+      // Honouring this class's "never throws" contract. The user's intent -
+      // "I do not want this frame" - is already satisfied by its removal from
+      // the batch; a file the OS will not let us unlink is not their problem.
     }
   }
 

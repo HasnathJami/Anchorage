@@ -183,6 +183,10 @@ rather than blocking mock locations. Match that standard.
 | `permission_handler` | Pinned to **12.0.3** | 13.x requires AGP 9 / compileSdk 37 and breaks the Flutter Android build. |
 | Hilt | Pinned to **2.57.2** | 2.58+ requires AGP 9. |
 | Vertical zoom slider | Hand-built | A rotated Material `Slider` inverts its own gesture axis and cannot put labels inside the track. |
+| Quick-zoom buttons (`0.5 / 1 / 2`) | Built from the sensor's **zoom range**, never from the count of back cameras | `availableCameras()` reports *logical* cameras: a three-lens phone publishes one rear camera spanning all three. Counting cameras collapsed the row to nothing on nearly every device. `ZoomLadder` owns the rules; do not reintroduce a lens-count check. |
+| Preview opens at 1x | Not at `minZoom` | On a phone whose logical rear camera spans an ultra-wide, `minZoom` is 0.5, and the app opened on a distorted wide frame nobody asked for. |
+| Upload claim | Conditional `UPDATE` plus a ten-minute lease (`claimed_at`) | The WorkManager isolate has its own object graph and cannot see the foreground `_inFlight` flag. Without the claim a file uploads twice; without the lease a process killed mid-transfer strands the row in `uploading` forever. Both halves are required. |
+| Mock-response switcher | In the camera's settings sheet, not the Upload Manager | The reference's bottom bar carries one button and nothing else. |
 | Room `onConflict` | **ABORT**, no destructive migration fallback | A duplicate check-in is a violation to report, not to overwrite; losing an attendance log to a schema bump is a data-integrity incident. |
 | Background scheduling inside the isolate | **Disabled** | Scheduling WorkManager work from inside a WorkManager task builds an accidental wake-up loop. |
 | Upload concurrency | **Serial** | Parallel uploads on a weak link starve each other and blow up memory on large files. |
@@ -204,13 +208,13 @@ for one-off stubs.
 `a link lost mid-transfer parks rather than counts`, `a timestamp before the UTC date boundary
 still lands on the local day`. A failing test should read as a statement of what broke.
 
-**Every rule in a doc comment has a test.** `ProcessUploadQueue` lists five rules; the test
+**Every rule in a doc comment has a test.** `ProcessUploadQueue` lists six rules; the test
 file has a group per rule. If you add a rule, add its group.
 
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **136 Android unit tests**, **98 Flutter tests**, plus 5 Compose instrumentation
+Current state: **136 Android unit tests**, **140 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

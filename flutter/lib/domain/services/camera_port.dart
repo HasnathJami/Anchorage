@@ -27,6 +27,18 @@ abstract interface class CameraPort {
   /// Takes a picture and persists it to app-private storage.
   Future<Result<CapturedShot>> capture({required double zoomLevel});
 
+  /// Deletes a shot the user dropped before the batch was handed over.
+  ///
+  /// Removing it from the in-memory batch is not enough: the file is on disk
+  /// the instant the shutter fires - that ordering is the app's whole
+  /// durability story - so a discard that only forgot the entry would leave
+  /// every rejected frame on the device for good.
+  ///
+  /// Returns nothing, deliberately. A file that is already gone is the outcome
+  /// the caller wanted, and there is no remedy to offer for a delete that
+  /// fails, so there is nothing worth interrupting the user with.
+  Future<void> discard(CapturedShot shot);
+
   /// Releases the sensor - called when the app is backgrounded so another app
   /// (or a phone call) can take it.
   Future<void> dispose();

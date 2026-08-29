@@ -69,6 +69,35 @@ void main() {
     });
   });
 
+  group('fileNameParts', () {
+    test('splits the stem from the extension', () {
+      expect(
+        Formatters.fileNameParts('RAW_DATA_NODE_081.dat'),
+        ('RAW_DATA_NODE_081', '.dat'),
+      );
+    });
+
+    test('a name with no extension keeps everything in the stem', () {
+      expect(Formatters.fileNameParts('MANIFEST'), ('MANIFEST', ''));
+    });
+
+    test('a trailing dot is not an extension', () {
+      // Otherwise the row would render an orphaned grey full stop.
+      expect(Formatters.fileNameParts('ODD.'), ('ODD.', ''));
+    });
+
+    test('a leading dot is the whole name, not an extension', () {
+      expect(Formatters.fileNameParts('.gitkeep'), ('.gitkeep', ''));
+    });
+
+    test('only the last dot splits a multi-part name', () {
+      expect(
+        Formatters.fileNameParts('SCAN.2026.08.tar.gz'),
+        ('SCAN.2026.08.tar', '.gz'),
+      );
+    });
+  });
+
   test('attempts renders the retry counter', () {
     expect(Formatters.attempts(3, 5), '3/5');
   });

@@ -68,9 +68,15 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     on<CameraResumed>(_onResumed, transformer: sequential());
     on<CameraLensSelected>(_onLensSelected, transformer: sequential());
     on<CameraZoomChanged>(_onZoomChanged, transformer: restartable());
+    on<CameraZoomStopSelected>(_onZoomStopSelected, transformer: sequential());
     on<CameraPinchStarted>(_onPinchStarted, transformer: sequential());
     on<CameraPinchZoomed>(_onPinchZoomed, transformer: restartable());
     on<CameraFlashToggled>(_onFlashToggled, transformer: sequential());
+    on<CameraFlashModeSelected>(_onFlashModeSelected, transformer: sequential());
+    on<CameraGridToggled>(
+      (CameraGridToggled event, Emitter<CameraState> emit) =>
+          emit(state.copyWith(showsGrid: !state.showsGrid)),
+    );
     on<CameraTorchTimedOut>(_onTorchTimedOut, transformer: sequential());
     on<CameraFocusRequested>(_onFocusRequested, transformer: restartable());
     on<CameraFocusIndicatorExpired>(_onFocusExpired, transformer: sequential());
@@ -214,9 +220,13 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     Emitter<CameraState> emit,
   ) async {
     if (!state.isReady) return;
+    await _openLens(event.lens, emit);
+  }
 
+  /// Swaps the open sensor and re-applies the settings that outlive it.
+  Future<void> _openLens(CameraLens lens, Emitter<CameraState> emit) async {
     emit(state.copyWith(phase: CameraPhase.initialising));
-    final Result<CameraSession> result = await _camera.selectLens(event.lens);
+    final Result<CameraSession> result = await _camera.selectLens(lens);
 
     result.fold(
       (CameraSession session) =>
@@ -232,6 +242,58 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     Emitter<CameraState> emit,
   ) async {
     await _applyZoom(event.zoom, emit);
+  }
+
+  /// A quick-zoom button.
+  ///
+  /// Nearly always this is just "set the zoom": on a modern Android phone the
+  /// platform publishes one *logical* rear camera whose range already spans
+  /// the ultra-wide and the telephoto, so 0.5x and 2x are reachable without
+  /// changing cameras at all.
+  ///
+  /// The fallback exists for the devices where that is not true — some OEMs
+  /// publish each rear sensor separately, and there the open camera physically
+  /// cannot reach 0.5x. Rather than clamping the request and lighting a button
+  /// that did nothing, the nearest rear camera that *can* reach the ratio is
+  /// opened first.
+  Future<void> _onZoomStopSelected(
+    CameraZoomStopSelected event,
+    Emitter<CameraState> emit,
+  ) async {
+    if (!state.isReady) return;
+
+    final CameraSettings settings = state.settings;
+    final double ratio = event.stop.ratio;
+    final bool reachable = ratio >= settings.minZoom && ratio <= settings.maxZoom;
+
+    if (reachable) {
+      await _applyZoom(ratio, emit);
+      return;
+    }
+
+    final CameraLens? lens = _lensNearest(ratio);
+    if (lens == null || lens.id == state.session?.activeLens.id) {
+      // Nothing better exists; honour the tap as far as the hardware allows
+      // rather than silently ignoring it.
+      await _applyZoom(ratio, emit);
+      return;
+    }
+
+    await _openLens(lens, emit);
+    if (state.isReady) await _applyZoom(ratio, emit);
+  }
+
+  /// The rear camera whose native factor is closest to [ratio].
+  CameraLens? _lensNearest(double ratio) {
+    final List<CameraLens> candidates = state.backLenses;
+    if (candidates.isEmpty) return null;
+
+    return candidates.reduce(
+      (CameraLens best, CameraLens lens) =>
+          (lens.zoomFactor - ratio).abs() < (best.zoomFactor - ratio).abs()
+              ? lens
+              : best,
+    );
   }
 
   Future<void> _onPinchStarted(
@@ -284,6 +346,14 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   ) async {
     if (state.session == null) return;
     await _applyFlashMode(_flashPolicy.next(state.flashMode), emit);
+  }
+
+  Future<void> _onFlashModeSelected(
+    CameraFlashModeSelected event,
+    Emitter<CameraState> emit,
+  ) async {
+    if (state.session == null || event.mode == state.flashMode) return;
+    await _applyFlashMode(event.mode, emit);
   }
 
   Future<void> _onTorchTimedOut(
@@ -433,10 +503,22 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     );
   }
 
-  void _onShotDiscarded(CameraShotDiscarded event, Emitter<CameraState> emit) {
+  Future<void> _onShotDiscarded(
+    CameraShotDiscarded event,
+    Emitter<CameraState> emit,
+  ) async {
     final CaptureBatch? batch = state.batch;
     if (batch == null) return;
+
+    final CapturedShot? shot = batch.shots
+        .cast<CapturedShot?>()
+        .firstWhere((CapturedShot? s) => s?.id == event.shotId, orElse: () => null);
+    if (shot == null) return;
+
+    // The list first, so the grid answers the tap immediately; the file after,
+    // because the user is not waiting on a filesystem unlink.
     emit(state.copyWith(batch: batch.removeById(event.shotId)));
+    await _camera.discard(shot);
   }
 
   Future<void> _onBatchSubmitted(

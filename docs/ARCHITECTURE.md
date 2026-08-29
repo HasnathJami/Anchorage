@@ -165,8 +165,10 @@ mirror of Perimeter's `ArchitectureTest`:
 * **`data/` never reaches up into `presentation/` or `app/`.**
 * **`presentation/` never reaches down into `data/`**, apart from two seams listed by name in
   the test: the camera page needs the plugin's own `CameraController` to hand to
-  `CameraPreview` (the widget *is* the adapter), and the upload page drives `MockUploadApi`'s
-  canned-response switcher. Naming them means a third cannot appear quietly.
+  `CameraPreview` (the widget *is* the adapter), and the camera settings sheet drives
+  `MockUploadApi`'s canned-response switcher. Naming them means a third cannot appear quietly
+  — when the switcher moved out of the Upload Manager, the seam moved with it and the count
+  stayed at two.
 
 Splitting `PermissionGateway` was part of this: the port now sits in `domain/services/` and
 its `permission_handler` implementation in `data/services/`. They were one file, which meant

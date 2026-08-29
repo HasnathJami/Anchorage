@@ -3,18 +3,27 @@ import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:anchorage_harbor/di/injector.dart';
 import 'package:anchorage_harbor/data/datasources/camera_plugin_adapter.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
+import 'package:anchorage_harbor/presentation/capture/widgets/batch_review_sheet.dart';
 import 'package:anchorage_harbor/presentation/capture/widgets/camera_chrome.dart';
+import 'package:anchorage_harbor/presentation/capture/widgets/camera_settings_sheet.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// `CameraPreviewScreen` from the brief.
 ///
-/// Layout is a direct transcription of the reference design: a full-bleed live
-/// preview with floating chrome - close / flash / settings across the top, a
-/// vertical zoom slider on the right edge, lens pills and the shutter row near
-/// the bottom, and the blue "UPLOAD BATCH" call to action pinned beneath them.
+/// The layout is a transcription of the reference design, top to bottom:
+///
+/// | Reference | Here |
+/// | --- | --- |
+/// | close button in a dark disc, top left | [GlassCircleButton] |
+/// | bare flash and gear glyphs, top right | [_FlashButton], [_SettingsButton] |
+/// | vertical zoom slider hugging the right edge | [VerticalZoomSlider] |
+/// | three round `0.5 / 1 / 2` buttons | [ZoomStopSelector] |
+/// | thumbnail + blue count badge, shutter, lens flip | [BatchThumbnail], [ShutterButton] |
+/// | full-width blue `UPLOAD BATCH (n)` | [_UploadBatchButton] |
 ///
 /// The widget observes the app lifecycle itself. That is not incidental: on
 /// Android the OS reclaims the camera when the app is backgrounded, and a
@@ -169,6 +178,11 @@ class _PreviewSurface extends StatelessWidget {
                 )
               else
                 const _PreviewPlaceholder(),
+              if (state.showsGrid) const CompositionGrid(),
+              // A gentle darkening at both ends so white chrome stays legible
+              // over a bright sky or a white wall. Without it the reference
+              // design's floating controls disappear outdoors.
+              const _ChromeScrim(),
               if (state.focusPoint != null)
                 FocusReticle(
                   position: Offset(
@@ -209,6 +223,32 @@ class _FittedPreview extends StatelessWidget {
   }
 }
 
+/// Top and bottom gradients that keep the floating controls readable.
+class _ChromeScrim extends StatelessWidget {
+  const _ChromeScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return const IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[
+              Color(0x59000000),
+              Color(0x00000000),
+              Color(0x00000000),
+              Color(0x99000000),
+            ],
+            stops: <double>[0, 0.18, 0.55, 1],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// What fills the frame before the sensor opens, and in previews and tests
 /// where no camera exists. A gradient in the reference design's own tones,
 /// rather than a black void that reads as a crash.
@@ -238,14 +278,13 @@ class _ChromeOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final CameraBloc bloc = context.read<CameraBloc>();
-    final HarborTypography text = context.harborText;
 
     return SafeArea(
       child: Column(
         children: <Widget>[
           // ---------------------------------------------------- top controls
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(16, 8, 12, 0),
             child: Row(
               children: <Widget>[
                 GlassCircleButton(
@@ -254,56 +293,51 @@ class _ChromeOverlay extends StatelessWidget {
                   onPressed: () => Navigator.of(context).maybePop(),
                 ),
                 const Spacer(),
-                GlassCircleButton(
-                  icon: _flashIcon(state.flashMode),
-                  // Announced with its current mode rather than as a bare
-                  // "Flash mode": a cycling button whose label never changes
-                  // tells a screen-reader user nothing about what pressing it
-                  // just did.
-                  semanticLabel: 'Flash: ${_flashLabel(state.flashMode)}',
-                  // Filled when the flash is armed, so the state is carried by
-                  // the icon *and* the fill rather than by colour alone.
-                  filled: state.flashMode != CaptureFlashMode.off,
-                  onPressed: () => bloc.add(const CameraFlashToggled()),
-                ),
+                _FlashButton(state: state),
                 const SizedBox(width: 4),
-                GlassCircleButton(
-                  icon: Icons.settings_outlined,
-                  semanticLabel: 'Upload manager',
-                  filled: false,
-                  onPressed: () =>
-                      Navigator.of(context).pushNamed(HarborRoutes.uploads),
-                ),
+                _SettingsButton(state: state),
               ],
             ),
           ),
 
-          const SizedBox(height: 6),
-          Text(
-            'VISUAL',
-            style: text.eyebrow.copyWith(color: Colors.white70, fontSize: 11),
-          ),
+          const SizedBox(height: 10),
+          _CaptureModeLabel(state: state),
 
           // ---------------------------------------------------- zoom slider
           Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 14),
-                child: VerticalZoomSlider(
-                  settings: state.settings,
-                  onZoomChanged: (double zoom) =>
-                      bloc.add(CameraZoomChanged(zoom)),
-                ),
-              ),
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                // Sized against what is actually left rather than a constant:
+                // on a short screen a fixed 230 dp slider is an overflow
+                // stripe across the preview, which is a rendering bug the user
+                // sees before they see the camera.
+                final double height =
+                    (constraints.maxHeight - 24).clamp(96.0, 230.0);
+
+                return Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: VerticalZoomSlider(
+                      zoom: state.settings.zoom,
+                      minZoom: state.settings.minZoom,
+                      maxZoom: state.settings.maxZoom,
+                      height: height,
+                      onZoomChanged: (double zoom) =>
+                          bloc.add(CameraZoomChanged(zoom)),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
 
-          // ------------------------------------------------------ lens pills
-          LensSelector(
-            lenses: state.selectableLenses,
-            activeLens: state.session?.activeLens,
-            onSelected: (CameraLens lens) => bloc.add(CameraLensSelected(lens)),
+          // ------------------------------------------------- quick-zoom row
+          ZoomStopSelector(
+            stops: state.zoomStops,
+            zoom: state.settings.zoom,
+            onSelected: (ZoomStop stop) =>
+                bloc.add(CameraZoomStopSelected(stop)),
           ),
 
           const SizedBox(height: 18),
@@ -318,8 +352,7 @@ class _ChromeOverlay extends StatelessWidget {
                 BatchThumbnail(
                   count: state.shotCount,
                   latestPath: state.batch?.latest?.filePath,
-                  onTap: () =>
-                      Navigator.of(context).pushNamed(HarborRoutes.uploads),
+                  onTap: () => _openBatchReview(context, state),
                 ),
                 ShutterButton(
                   isCapturing: state.isCapturing,
@@ -328,7 +361,9 @@ class _ChromeOverlay extends StatelessWidget {
                 ),
                 GlassCircleButton(
                   icon: Icons.flip_camera_android_outlined,
-                  semanticLabel: 'Switch camera',
+                  semanticLabel: state.isFrontFacing
+                      ? 'Switch to the rear camera'
+                      : 'Switch to the front camera',
                   size: 44,
                   onPressed: () => _flip(context, state),
                 ),
@@ -336,12 +371,7 @@ class _ChromeOverlay extends StatelessWidget {
             ),
           ),
 
-          const SizedBox(height: 6),
-          Text(
-            'LIVE VIEW',
-            style: text.eyebrow.copyWith(color: Colors.white38, fontSize: 12),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 14),
 
           // ------------------------------------------------- upload the batch
           Padding(
@@ -353,20 +383,25 @@ class _ChromeOverlay extends StatelessWidget {
     );
   }
 
-  IconData _flashIcon(CaptureFlashMode mode) => switch (mode) {
-        CaptureFlashMode.off => Icons.flash_off,
-        CaptureFlashMode.auto => Icons.flash_auto,
-        CaptureFlashMode.always => Icons.flash_on,
-        CaptureFlashMode.torch => Icons.highlight,
-      };
+  void _openBatchReview(BuildContext context, CameraState state) {
+    final CameraBloc bloc = context.read<CameraBloc>();
 
-  /// Spoken by the flash button, so the announcement changes as it cycles.
-  String _flashLabel(CaptureFlashMode mode) => switch (mode) {
-        CaptureFlashMode.off => 'off',
-        CaptureFlashMode.auto => 'automatic',
-        CaptureFlashMode.always => 'on',
-        CaptureFlashMode.torch => 'torch',
-      };
+    if (!state.hasShots) {
+      // Nothing of this user's own is waiting, so the useful destination is
+      // the queue - which may well be full of earlier batches.
+      Navigator.of(context).pushNamed(HarborRoutes.uploads);
+      return;
+    }
+
+    BatchReviewSheet.show(
+      context,
+      bloc: bloc,
+      onOpenUploads: () {
+        Navigator.of(context).pop();
+        Navigator.of(context).pushNamed(HarborRoutes.uploads);
+      },
+    );
+  }
 
   void _flip(BuildContext context, CameraState state) {
     final CameraBloc bloc = context.read<CameraBloc>();
@@ -381,6 +416,102 @@ class _ChromeOverlay extends StatelessWidget {
         );
 
     if (target != null) bloc.add(CameraLensSelected(target));
+  }
+}
+
+/// The flash glyph, top right.
+///
+/// A bare icon rather than a disc, as in the reference. The *glyph* carries
+/// the mode - `flash_off`, `flash_auto`, `flash_on`, `highlight` are four
+/// distinct shapes - so the amber tint when the flash is armed only reinforces
+/// a state that is already legible without colour.
+class _FlashButton extends StatelessWidget {
+  const _FlashButton({required this.state});
+
+  final CameraState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool armed = state.flashMode != CaptureFlashMode.off;
+
+    return GlassCircleButton(
+      icon: switch (state.flashMode) {
+        CaptureFlashMode.off => Icons.flash_off,
+        CaptureFlashMode.auto => Icons.flash_auto,
+        CaptureFlashMode.always => Icons.flash_on,
+        CaptureFlashMode.torch => Icons.highlight,
+      },
+      // Announced with its current mode rather than as a bare "Flash mode": a
+      // cycling button whose label never changes tells a screen-reader user
+      // nothing about what pressing it just did.
+      semanticLabel: 'Flash: ${switch (state.flashMode) {
+        CaptureFlashMode.off => 'off',
+        CaptureFlashMode.auto => 'automatic',
+        CaptureFlashMode.always => 'on',
+        CaptureFlashMode.torch => 'torch',
+      }}',
+      filled: false,
+      iconSize: 22,
+      tint: armed ? context.harborColors.caution : Colors.white,
+      onPressed: () => context.read<CameraBloc>().add(const CameraFlashToggled()),
+    );
+  }
+}
+
+class _SettingsButton extends StatelessWidget {
+  const _SettingsButton({required this.state});
+
+  final CameraState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final CameraBloc bloc = context.read<CameraBloc>();
+
+    return GlassCircleButton(
+      icon: Icons.settings_outlined,
+      semanticLabel: 'Capture settings',
+      filled: false,
+      iconSize: 22,
+      onPressed: () => CameraSettingsSheet.show(
+        context,
+        flashMode: state.flashMode,
+        showsGrid: state.showsGrid,
+        onFlashModeSelected: (CaptureFlashMode mode) =>
+            bloc.add(CameraFlashModeSelected(mode)),
+        onGridToggled: () => bloc.add(const CameraGridToggled()),
+        onOpenUploads: () {
+          Navigator.of(context).pop();
+          Navigator.of(context).pushNamed(HarborRoutes.uploads);
+        },
+      ),
+    );
+  }
+}
+
+/// The small centred caption under the top bar.
+///
+/// The reference shows a word here. It says what the shutter is currently
+/// doing rather than naming the screen, because "this frame joins a batch of
+/// four" is the one thing about this camera that differs from every other
+/// camera the user has held.
+class _CaptureModeLabel extends StatelessWidget {
+  const _CaptureModeLabel({required this.state});
+
+  final CameraState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label =
+        state.hasShots ? 'BATCH · ${state.shotCount} CAPTURED' : 'BATCH CAPTURE';
+
+    return Text(
+      label,
+      style: context.harborText.eyebrow.copyWith(
+        color: Colors.white70,
+        fontSize: 11,
+        shadows: const <Shadow>[Shadow(color: Color(0x99000000), blurRadius: 4)],
+      ),
+    );
   }
 }
 
@@ -399,11 +530,16 @@ class _UploadBatchButton extends StatelessWidget {
       height: 52,
       width: double.infinity,
       child: FilledButton(
+        // With an empty batch the button still leads somewhere useful - the
+        // queue - instead of being a dead grey rectangle for the whole of a
+        // first run.
         onPressed: state.canSubmitBatch
             ? () => bloc.add(const CameraBatchSubmitted())
-            : null,
+            : (state.isSubmitting
+                ? null
+                : () => Navigator.of(context).pushNamed(HarborRoutes.uploads)),
         style: FilledButton.styleFrom(
-          backgroundColor: colors.primary,
+          backgroundColor: count > 0 ? colors.primary : colors.primary.withValues(alpha: 0.45),
           disabledBackgroundColor: colors.primary.withValues(alpha: 0.35),
           foregroundColor: Colors.white,
           disabledForegroundColor: Colors.white60,
@@ -423,7 +559,7 @@ class _UploadBatchButton extends StatelessWidget {
                   const Icon(Icons.anchor, size: 18),
                   const SizedBox(width: 10),
                   Text(
-                    'UPLOAD BATCH ($count)',
+                    count > 0 ? 'UPLOAD BATCH ($count)' : 'UPLOAD MANAGER',
                     style: context.harborText.button,
                   ),
                 ],

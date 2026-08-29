@@ -1,6 +1,7 @@
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:equatable/equatable.dart';
 
@@ -87,6 +88,7 @@ class CameraState extends Equatable {
     this.batch,
     this.focusPoint,
     this.flashMode = CaptureFlashMode.off,
+    this.showsGrid = false,
     this.isCapturing = false,
     this.isSubmitting = false,
     this.notice,
@@ -112,6 +114,10 @@ class CameraState extends Equatable {
   /// off after a lens switch or a trip to another app.
   final CaptureFlashMode flashMode;
 
+  /// Rule-of-thirds overlay. A user preference like [flashMode], so it also
+  /// lives outside the session and survives every sensor restart.
+  final bool showsGrid;
+
   final bool isCapturing;
   final bool isSubmitting;
   final CameraNotice? notice;
@@ -127,11 +133,23 @@ class CameraState extends Equatable {
 
   List<CameraLens> get lenses => session?.availableLenses ?? const <CameraLens>[];
 
-  /// Only the back cameras get a zoom pill; the front camera is reached from
-  /// the flip button instead, matching the reference design.
-  List<CameraLens> get selectableLenses => lenses
+  /// The rear sensors. The front camera is reached from the flip button, never
+  /// from the zoom row, so it is excluded here.
+  List<CameraLens> get backLenses => lenses
       .where((CameraLens lens) => lens.kind != CameraLensKind.front)
       .toList(growable: false);
+
+  bool get isFrontFacing =>
+      session?.activeLens.kind == CameraLensKind.front ||
+      settings.isFrontFacing;
+
+  /// The `0.5 / 1 / 2` buttons, derived from what this sensor can actually
+  /// reach rather than from how many cameras the platform happens to list.
+  List<ZoomStop> get zoomStops =>
+      ZoomLadder.forRange(minZoom: settings.minZoom, maxZoom: settings.maxZoom);
+
+  /// Which of [zoomStops] is currently lit.
+  ZoomStop? get activeZoomStop => ZoomLadder.activeStop(zoomStops, settings.zoom);
 
   bool get canSubmitBatch => hasShots && !isSubmitting && !isCapturing;
 
@@ -143,6 +161,7 @@ class CameraState extends Equatable {
     FocusPoint? focusPoint,
     bool clearFocusPoint = false,
     CaptureFlashMode? flashMode,
+    bool? showsGrid,
     bool? isCapturing,
     bool? isSubmitting,
     CameraNotice? notice,
@@ -156,6 +175,7 @@ class CameraState extends Equatable {
       batch: batch ?? this.batch,
       focusPoint: clearFocusPoint ? null : (focusPoint ?? this.focusPoint),
       flashMode: flashMode ?? this.flashMode,
+      showsGrid: showsGrid ?? this.showsGrid,
       isCapturing: isCapturing ?? this.isCapturing,
       isSubmitting: isSubmitting ?? this.isSubmitting,
       notice: clearNotice ? null : (notice ?? this.notice),
@@ -172,6 +192,7 @@ class CameraState extends Equatable {
         batch,
         focusPoint,
         flashMode,
+        showsGrid,
         isCapturing,
         isSubmitting,
         notice,

@@ -124,15 +124,55 @@ Two screens: `CameraPreviewScreen` and the Upload Manager.
 | Custom camera preview screen | `CameraPreviewPage` — full-bleed preview with floating chrome |
 | Pinch-to-zoom | `CameraPinchStarted` / `CameraPinchZoomed`, anchored to the zoom the gesture began at |
 | Zoom slider | `VerticalZoomSlider` — hand-built, because a rotated Material `Slider` inverts its own drag axis |
-| Rounded lens buttons (0.5x, 1x, …) | `LensSelector`, built from the device's *actual* back cameras — a single-lens phone gets one pill, not three fake ones |
+| Rounded zoom buttons (0.5x, 1x, 2x) | `ZoomStopSelector` over the `ZoomLadder` policy — see [Why the zoom buttons are ratios, not cameras](#why-the-zoom-buttons-are-ratios-not-cameras) |
 | Tap-to-focus with a visual indicator | `CameraFocusRequested` → `FocusReticle`, shown optimistically and cleared on a dwell timer |
-| Batch capture with a "Pending Uploads" list | `CaptureBatch` → `EnqueueBatch` → `UploadManagerPage` |
+| Batch capture with a "Pending Uploads" list | `CaptureBatch` → `BatchReviewSheet` → `EnqueueBatch` → `UploadManagerPage` |
 | Background worker monitoring connectivity | `WorkManagerScheduler` + `syncCallbackDispatcher` |
 | Images stay queued on failure | SQLite-backed `UploadQueueRepositoryImpl`; nothing leaves the queue until the server acknowledges it |
 | Automatic retry on a stable connection, no user action | `ConnectivityMonitor` (with a settle window) → `UploadManagerBloc` → `ProcessUploadQueue` |
 | No API available — mock success and failure | `MockUploadApi` (working transport) + `http_upload_api.dart` (real transport, fully written and commented out) |
 
-### The sync engine in five rules
+### The camera screen, control by control
+
+Read top to bottom, exactly as the reference design is laid out.
+
+| Control | Behaviour |
+| --- | --- |
+| **✕**, top left | Leaves the camera; the sensor is released with the route. |
+| **Flash**, top right | Cycles off → auto → on → torch. The *glyph* changes with the mode, so the state is never carried by colour alone. The torch has an idle deadline so a pocketed phone does not cook its own LED. |
+| **⚙**, top right | Opens `CameraSettingsSheet`: flash as an explicit four-way choice, a rule-of-thirds grid, the mock-transport switch, and a route to the Upload Manager. |
+| **Viewfinder** | Tap to focus *and* meter exposure — tapping a dark corner and getting a sharp but unreadable frame is not what the gesture means. Pinch to zoom, anchored to where the gesture started. |
+| **Vertical slider**, right edge | Absolute zoom, labelled with the sensor's real minimum and maximum. Drag up zooms in. |
+| **0.5 / 1 / 2**, above the shutter | Quick zoom. The selected pill reads the *live* value (`1.7x`) whenever the zoom sits between stops. |
+| **Thumbnail + badge**, bottom left | Opens `BatchReviewSheet` — the shots that have **not** been handed over yet, where a blurred frame can still be dropped for free. With an empty batch it goes to the Upload Manager instead. |
+| **Shutter** | One photograph per completed capture; the event is `droppable`, so hammering the button cannot queue twelve. |
+| **Flip**, bottom right | Front ⇄ rear. |
+| **UPLOAD BATCH (n)** | Hands the batch to the sync engine and starts a fresh one. With nothing captured it reads `UPLOAD MANAGER` and goes there, rather than sitting grey through the whole of a first run. |
+
+#### Why the zoom buttons are ratios, not cameras
+
+The obvious implementation of "0.5x / 1x / 2x" is one button per rear camera. It is also
+wrong on nearly every Android phone, and it was the first thing fixed in this pass.
+
+`availableCameras()` reports *logical* cameras. A phone with an ultra-wide, a main and a
+telephoto typically publishes **one** rear camera whose zoom range spans all three; the
+platform switches the physical sensor underneath as the zoom crosses a threshold. Building
+the row from that list therefore produced a single pill — and the code then hid the row
+entirely, because one pill that does nothing is worse than none. On the device a reviewer
+actually holds, the reference design's most recognisable control rendered as empty space.
+
+`ZoomLadder` builds the row from the sensor's real zoom range instead:
+
+* 1x is always offered — it is the frame the user is looking at.
+* A wide button appears only when the minimum is genuinely below 1x, and it targets that
+  exact minimum, so a 0.6x ultra-wide is honestly labelled `0.6` and lands where the
+  hardware stops rather than being silently clamped.
+* 2x, 3x, 5x, 10x are offered only up to what the sensor reaches. Three buttons, as in the
+  reference.
+* For the minority of devices that publish each rear sensor separately, tapping a ratio the
+  open camera cannot reach opens the rear camera that can, then sets the zoom.
+
+### The sync engine in six rules
 
 `ProcessUploadQueue` is the heart of the app. Every rule below has a test that fails if the
 rule is removed.
@@ -147,6 +187,14 @@ rule is removed.
    shown to the user rather than looped five times.
 5. **The queue is the source of truth throughout.** Every transition is written before the
    next task starts, so process death mid-sweep loses at most one in-flight transfer.
+6. **A task is claimed before it is uploaded.** Two sweeps genuinely race — the Bloc sweeps
+   in the foreground the moment the link steadies, and WorkManager sweeps from a separate
+   isolate with its own object graph, so neither can see the other's in-flight guard. The
+   claim is a single conditional `UPDATE`; exactly one sweep wins the row. The mirror-image
+   hazard — a process killed *holding* a claim, leaving a row stuck in `uploading`, which is
+   not an eligible state — is undone by a lease: anything claimed longer than ten minutes ago
+   with no progress is returned to the queue at the top of the next sweep. Without both
+   halves the queue either sends a file twice or strands it forever.
 
 Retries use **exponential backoff with full jitter** (4 s → 8 s → 16 s …, capped at 15 min,
 randomised across `[0, computed]`). Jitter matters: twelve photographs fail together when a
@@ -160,8 +208,10 @@ brief permits:
 * **`MockUploadApi`** is a *working* transport, not a stub. It streams realistic progress at
   a configurable throughput, fails at a configurable point, and returns the full failure
   taxonomy — success, mid-transfer low bandwidth, no internet, retryable 503, permanent 400,
-  and hang-until-timeout. A switcher at the bottom of the Upload Manager changes its
-  behaviour live, so every path can be demonstrated on a real device in seconds.
+  and hang-until-timeout. A switcher inside the camera's **⚙ settings sheet** changes its
+  behaviour live, so every path can be demonstrated on a real device in seconds. It sits
+  there rather than on the Upload Manager because the reference design's bottom bar carries
+  one button and nothing else.
 * **`http_upload_api.dart`** is the production HTTP implementation, written out in full and
   commented out. Swapping them is one line in `injector.dart`.
 
@@ -335,12 +385,20 @@ flutter run --release       # on a connected device
 flutter build apk --release # -> build/app/outputs/flutter-apk/app-release.apk
 ```
 
-**On device:** grant camera permission, take a few photographs, tap **UPLOAD BATCH (n)**,
-then open the Upload Manager (gear icon, or the thumbnail). Use the **MOCK API RESPONSE**
-switcher at the bottom to force each failure mode and watch the queue react. To see the
-real resilience behaviour, turn off Wi-Fi and mobile data: the rows move to
-`WAITING FOR CONNECTION` and resume by themselves within a few seconds of the network
-returning — no button, no app restart.
+**On device, in order:**
+
+1. Grant camera permission. Pinch, drag the slider, and tap `0.5` / `1` / `2` — the selected
+   pill reads the live zoom between stops. Tap the frame to focus.
+2. Take several photographs, then tap the **thumbnail** to review the batch and drop a frame
+   you do not want. Discarding deletes the file, not just the list entry.
+3. Tap **UPLOAD BATCH (n)**. The batch is written to SQLite before anything is sent.
+4. Open **⚙ → MOCK API RESPONSE** and pick `LOW BANDWIDTH`, `SERVER 503` or `SERVER 400`,
+   then watch the Upload Manager: retryable failures back off and return, a 400 fails once
+   and stops.
+5. For the real thing, turn off Wi-Fi and mobile data. The rows move to
+   `WAITING FOR CONNECTION` and resume by themselves within a few seconds of the network
+   returning — no button, no app restart. Kill the app entirely and WorkManager finishes the
+   queue without it.
 
 ---
 
@@ -356,15 +414,15 @@ over pure domain code, with fakes standing in for hardware.
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
 | `android presentation/attendance/` | 25 | MVI reduction, permission escalation, every rejection path, formatters |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
-| `flutter` | 98 | Sync engine (22), camera Bloc incl. flash (27), sync domain (19), formatters (10), upload manager Bloc (9), flash policy (7), architecture (4) |
-| **Total** | **227** | |
+| `flutter` | 140 | Camera Bloc incl. flash, zoom stops and discard (32), sync engine incl. claim + lease (25), sync domain (17), formatters (16), zoom ladder (12), camera chrome widgets (10), upload manager Bloc (9), upload manager widgets (8), flash policy (7), architecture (4) |
+| **Total** | **269** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
 cd android  && ./gradlew test        # 129 tests
-cd ../flutter && flutter test        # 98 tests
+cd ../flutter && flutter test        # 140 tests
 ```
 
 Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.

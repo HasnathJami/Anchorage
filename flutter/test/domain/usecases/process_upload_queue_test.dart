@@ -364,6 +364,73 @@ void main() {
       expect(report.failureOrNull, isA<StorageReadFailure>());
     });
   });
+
+  group('rule 6 - a task is claimed before it is uploaded', () {
+    test('a row another sweep won in the meantime is skipped, not sent twice',
+        () async {
+      // The real race: this sweep reads two eligible tasks, and before it gets
+      // to the second one the WorkManager isolate — a different object graph,
+      // invisible to this one's in-flight guard — claims it. Only the atomic
+      // claim can catch that, which is why the read here deliberately still
+      // hands over the row that has since been taken.
+      repository = _StaleReadRepository(<UploadTask>[
+        taskFixture(id: 'mine'),
+        taskFixture(id: 'theirs'),
+      ]);
+      await repository.claim('theirs', now);
+
+      final report = await buildEngine()();
+
+      expect(uploader.attempts, <String>['mine']);
+      expect(report.valueOrNull?.attempted, 1);
+    });
+
+    test('a task abandoned mid-transfer is re-queued, not stranded', () async {
+      // The bug this closes: the process is killed between the claim and the
+      // first byte. The row is left "uploading", which is not an eligible
+      // state, so without a reaper that photograph is never attempted again.
+      repository = FakeUploadQueueRepository(<UploadTask>[
+        taskFixture(
+          id: 'stranded',
+          status: UploadStatus.uploading,
+          bytesTransferred: 512,
+        ),
+      ]);
+
+      await buildEngine()();
+
+      expect(uploader.attempts, <String>['stranded']);
+      expect(repository.byId('stranded')?.status, UploadStatus.synced);
+    });
+
+    test('a transfer that is still moving is left alone by the reaper',
+        () async {
+      repository = FakeUploadQueueRepository(<UploadTask>[
+        taskFixture(id: 'moving'),
+      ]);
+      // A live lease, taken a moment ago by the other sweep.
+      await repository.claim('moving', now);
+
+      await buildEngine()();
+
+      expect(uploader.attempts, isEmpty);
+      expect(repository.byId('moving')?.status, UploadStatus.uploading);
+    });
+  });
+}
+
+/// A queue whose eligibility read is deliberately out of date.
+///
+/// It returns every task regardless of status, which is exactly what a *real*
+/// read looks like from the losing side of a race: correct when it was taken,
+/// stale by the time the caller acts on it. Nothing but the atomic claim can
+/// close that window, so this is the only honest way to test it.
+class _StaleReadRepository extends FakeUploadQueueRepository {
+  _StaleReadRepository(super.initial);
+
+  @override
+  Future<Result<List<UploadTask>>> readEligible(DateTime now) async =>
+      Result<List<UploadTask>>.success(tasks);
 }
 
 /// Uploads the first file successfully, then kills the link - the "signal died

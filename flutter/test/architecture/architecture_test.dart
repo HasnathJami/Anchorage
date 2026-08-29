@@ -101,16 +101,19 @@ void main() {
 /// * `camera_preview_page.dart` needs the plugin's own `CameraController` to
 ///   hand to `CameraPreview`. There is no way to render a platform texture
 ///   from behind a port — the widget *is* the adapter.
-/// * `upload_manager_page.dart` drives `MockUploadApi`'s canned-response
-///   switcher, a debug affordance over a component that only exists because
-///   the brief supplies no server.
+/// * `camera_settings_sheet.dart` drives `MockUploadApi`'s canned-response
+///   switcher, a demonstration affordance over a component that only exists
+///   because the brief supplies no server. It moved here from
+///   `upload_manager_page.dart` when that screen was brought back in line with
+///   the reference design, whose bottom bar carries one button and nothing
+///   else; the count of seams did not grow.
 ///
 /// They are listed by name rather than allowed by pattern so that adding a
 /// third is a decision someone has to write down here, not a diff nobody
 /// notices.
 const Set<String> _presentationDataSeams = <String>{
   'camera_preview_page.dart',
-  'upload_manager_page.dart',
+  'camera_settings_sheet.dart',
 };
 
 class _Import {

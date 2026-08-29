@@ -2,6 +2,7 @@ import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/flash_policy.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
 import 'package:anchorage_harbor/domain/usecases/sync_use_cases.dart';
 import 'package:bloc_test/bloc_test.dart';
@@ -445,7 +446,7 @@ void main() {
     );
 
     blocTest<CameraBloc, CameraState>(
-      'a discarded shot leaves the batch',
+      'a discarded shot leaves the batch and the disk',
       build: buildBloc,
       act: (CameraBloc bloc) async {
         bloc.add(const CameraStarted());
@@ -455,7 +456,24 @@ void main() {
         bloc.add(const CameraShotDiscarded('shot-1'));
         await Future<void>.delayed(Duration.zero);
       },
-      verify: (CameraBloc bloc) => expect(bloc.state.shotCount, 0),
+      verify: (CameraBloc bloc) {
+        expect(bloc.state.shotCount, 0);
+        // Forgetting the entry without deleting the file would leave every
+        // rejected frame on the device for good.
+        expect(camera.discarded, <String>['shot-1']);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'discarding a shot that is not in the batch deletes nothing',
+      build: buildBloc,
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const CameraShotDiscarded('never-taken'));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) => expect(camera.discarded, isEmpty),
     );
 
     blocTest<CameraBloc, CameraState>(
@@ -512,7 +530,7 @@ void main() {
       },
     );
 
-    test('the front camera is excluded from the zoom pills', () {
+    test('the front camera is never a candidate for a zoom stop', () {
       const CameraLens front = CameraLens(
         id: 'front-0',
         zoomFactor: 1,
@@ -527,7 +545,70 @@ void main() {
         ),
       );
 
-      expect(state.selectableLenses, <CameraLens>[ultraWideLens, wideLens]);
+      expect(state.backLenses, <CameraLens>[ultraWideLens, wideLens]);
     });
+  });
+
+  group('quick-zoom stops', () {
+    // The regression this group exists for: the row used to be built from the
+    // count of physical back cameras, and on a device that reports one logical
+    // rear camera - which is nearly all of them - it rendered nothing at all.
+    blocTest<CameraBloc, CameraState>(
+      'a single rear camera that can zoom still gets a row of stops',
+      build: () {
+        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 8);
+        return buildBloc();
+      },
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(
+          bloc.state.zoomStops.map((ZoomStop stop) => stop.ratio),
+          <double>[1, 2, 3],
+        );
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'tapping a stop the open sensor can reach just sets the zoom',
+      build: () {
+        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 8);
+        return buildBloc();
+      },
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(const CameraZoomStopSelected(ZoomStop(ratio: 2, label: '2')));
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.zoomCalls.last, 2);
+        expect(camera.lensCalls, isEmpty);
+        expect(bloc.state.settings.zoom, 2);
+      },
+    );
+
+    blocTest<CameraBloc, CameraState>(
+      'a stop outside the open sensor opens the rear camera that can reach it',
+      build: () {
+        // A device that publishes each rear sensor separately: the open one
+        // starts at 1x and physically cannot go wider.
+        camera.session = sessionFor(wideLens, minZoom: 1, maxZoom: 4);
+        return buildBloc();
+      },
+      act: (CameraBloc bloc) async {
+        bloc.add(const CameraStarted());
+        await Future<void>.delayed(Duration.zero);
+        bloc.add(
+          const CameraZoomStopSelected(ZoomStop(ratio: 0.5, label: '0.5')),
+        );
+        await Future<void>.delayed(Duration.zero);
+      },
+      verify: (CameraBloc bloc) {
+        expect(camera.lensCalls.single, ultraWideLens);
+      },
+    );
   });
 }

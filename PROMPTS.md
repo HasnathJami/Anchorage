@@ -31,6 +31,7 @@ ones that worked.
 - [10. Task 2: camera](#10-task-2-camera)
 - [11. Task 2: the mock API](#11-task-2-the-mock-api)
 - [12. Corrections I had to make](#12-corrections-i-had-to-make)
+- [12a. The reference-fidelity pass on Task 2](#12a-the-reference-fidelity-pass-on-task-2)
 - [13. Documentation](#13-documentation)
 - [14. What I deliberately did *not* delegate](#14-what-i-deliberately-did-not-delegate)
 
@@ -437,6 +438,90 @@ requirement; *building* is.
 **h. A `dart:ui` type aliased instead of imported.** The camera adapter invented a
 `typedef Offset` rather than importing the real one, which would have silently failed against
 `setFocusPoint`. Caught by the analyzer.
+
+---
+
+## 12a. The reference-fidelity pass on Task 2
+
+After the first build was complete and green, I went back to the brief's PDF and compared its
+two Flutter screenshots against what the app actually rendered on a device. Several things did
+not match. This section records that pass, because it is the most useful part of the log: the
+model built what I asked for, and what I asked for was not quite right.
+
+> **"Extract the two Flutter reference screenshots from the assessment PDF and read them at
+> full magnification. Then go through `CameraPreviewPage` and `UploadManagerPage` control by
+> control and tell me every place the implementation differs from the reference — layout,
+> wording, and behaviour. Do not fix anything yet."**
+
+The comparison surfaced one genuine defect and several smaller drifts. The defect was worth
+the whole exercise:
+
+> **"`LensSelector` builds the `0.5 / 1 / 2` row from `availableCameras()` and hides itself
+> below two entries. Check that premise. What does `availableCameras()` actually return on a
+> modern multi-lens Android phone?"**
+
+It returns **one** rear camera — a *logical* camera whose zoom range spans the ultra-wide, the
+main and the telephoto. So the row collapsed on nearly every device, and the reference
+design's most recognisable control was empty space. The guard was sound; the premise was
+wrong. The correction:
+
+> **"Rebuild the row from the sensor's zoom range, not from the camera list. Put the rules in
+> a pure `ZoomLadder` policy under `domain/entities/` so they are testable on the VM: 1x
+> always present, a wide button only when the reported minimum is genuinely below 1x and
+> aimed at that exact minimum rather than a round 0.5, higher stops only up to what the sensor
+> reaches, capped at three. Keep physical lens switching, but only as a fallback for when the
+> open camera cannot reach the requested ratio. Write the test that fails against the old
+> implementation first."**
+
+Two smaller ones from the same read:
+
+> **"The reference render has the words `VISUAL` and `LIVE VIEW` floating over the preview.
+> Those are artefacts of however that image was generated, not labels — and we transcribed
+> them literally, so the app now announces `LIVE VIEW` across its own shutter button. Keep the
+> layout slots; put something true in them."**
+
+> **"The mock-response switcher sits in the Upload Manager's bottom bar, and the reference's
+> bottom bar has one button and nothing else. Move it into the camera's settings sheet and
+> update the architecture test's seam list with the reason — I do not want the count of
+> presentation→data seams growing quietly."**
+
+### The two bugs found by rendering the screens
+
+I did not trust a read-through to catch layout problems, so:
+
+> **"Write a throwaway widget test that renders both screens at 1080×2340 and writes them to
+> PNG with `--update-goldens`, so I can look at them. Delete it afterwards — I do not want
+> golden tests in this repo, they fail on every font tweak."**
+
+That produced two overflow stripes: the Upload Manager's title row and its byte-count row both
+fill the width on a 360 dp screen and exceed it at a large system text scale. Both are now
+`Expanded` with the right half yielding — the title ellipsises, the link chip does not.
+
+### The concurrency hole I went looking for afterwards
+
+Having found one wrong premise, I checked the other one I had asserted early:
+
+> **"`ProcessUploadQueue._inFlight` is an object field, and the WorkManager sweep runs in a
+> separate isolate with its own `Injector.configure()`. Walk me through what stops the two
+> from uploading the same file. If nothing does, fix it in the database, not in Dart."**
+
+Nothing did. The fix is a conditional `UPDATE` that claims the row, plus — because the
+mirror-image failure is worse — a lease, so a process killed mid-transfer does not strand its
+row in `uploading` forever where `readEligible` will never see it again.
+
+> **"The claim test has to simulate losing a race, and a fake that just returns eligible rows
+> cannot. Write a repository whose `readEligible` is deliberately stale — that is exactly what
+> a real read looks like from the losing side."**
+
+### And one piece of dead code the comparison exposed
+
+> **"`CameraShotDiscarded` has been in the event hierarchy since the first version and no
+> widget dispatches it. Either delete it or give it the screen it was waiting for."**
+
+It got the screen — `BatchReviewSheet` — because dropping a blurred frame *before* it becomes
+durable queue work is a real saving for someone on a metered link. And discarding now deletes
+the file, not just the list entry; the first version left every rejected photograph on the
+device for good.
 
 ---
 

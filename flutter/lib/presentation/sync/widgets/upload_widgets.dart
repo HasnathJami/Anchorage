@@ -105,11 +105,19 @@ class BatchProgressHeader extends StatelessWidget {
           const SizedBox(height: HarborSpacing.xs),
           Row(
             children: <Widget>[
-              Text(
-                Formatters.transferred(progress.uploadedBytes, progress.totalBytes),
-                style: text.itemMeta.copyWith(color: colors.textTertiary),
+              // The byte counts yield before the control does: "2.4 GB / 3.2 GB
+              // Uploaded" grows with the queue, and at a large text scale it
+              // would otherwise push PAUSE ALL off the screen.
+              Expanded(
+                child: Text(
+                  Formatters.transferred(
+                      progress.uploadedBytes, progress.totalBytes),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.itemMeta.copyWith(color: colors.textTertiary),
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: HarborSpacing.xs),
               GestureDetector(
                 onTap: onTogglePause,
                 behavior: HitTestBehavior.opaque,
@@ -149,8 +157,9 @@ class UploadTaskTile extends StatelessWidget {
     final HarborColors colors = context.harborColors;
     final HarborTypography text = context.harborText;
     final bool isActive = task.status.isActive;
+    final bool isDelivered = task.status == UploadStatus.synced;
 
-    return Container(
+    final Widget tile = Container(
       margin: const EdgeInsets.only(bottom: HarborSpacing.sm),
       padding: const EdgeInsets.all(HarborSpacing.sm),
       decoration: BoxDecoration(
@@ -171,14 +180,7 @@ class UploadTaskTile extends StatelessWidget {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        Formatters.fileName(task.displayName),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: text.itemTitle.copyWith(color: colors.textPrimary),
-                      ),
-                    ),
+                    Expanded(child: _FileName(name: task.displayName)),
                     if (isActive && (task.throughputBytesPerSecond ?? 0) > 0)
                       Text(
                         Formatters.throughput(task.throughputBytesPerSecond!),
@@ -212,6 +214,47 @@ class UploadTaskTile extends StatelessWidget {
           _TrailingAction(task: task, onRetry: onRetry, onDiscard: onDiscard),
         ],
       ),
+    );
+
+    // Delivered rows recede. They are kept visible - "did that one actually
+    // land?" is the question this screen exists to answer - but they must not
+    // compete with the rows that still need something to happen.
+    return isDelivered ? Opacity(opacity: 0.55, child: tile) : tile;
+  }
+}
+
+/// `RAW_DATA_NODE_081` in white, `.dat` in a muted tone, as in the reference.
+class _FileName extends StatelessWidget {
+  const _FileName({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final HarborColors colors = context.harborColors;
+    final HarborTypography text = context.harborText;
+    final (String stem, String extension) =
+        Formatters.fileNameParts(Formatters.fileName(name));
+
+    return Text.rich(
+      TextSpan(
+        text: stem,
+        style: text.itemTitle.copyWith(color: colors.textPrimary),
+        children: <InlineSpan>[
+          if (extension.isNotEmpty)
+            TextSpan(
+              text: extension,
+              style: text.itemTitle.copyWith(
+                color: colors.textTertiary,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      // The whole name, unsplit, is what a screen reader should hear.
+      semanticsLabel: name,
     );
   }
 }

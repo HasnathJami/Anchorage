@@ -19,6 +19,28 @@ abstract interface class UploadQueueRepository {
   /// Tasks the engine may attempt right now, in FIFO order.
   Future<Result<List<UploadTask>>> readEligible(DateTime now);
 
+  /// Atomically take ownership of a task for one upload attempt.
+  ///
+  /// Returns `true` only if this caller won the row. Two sweeps can genuinely
+  /// race: the Bloc sweeps in the foreground the moment the link steadies, and
+  /// WorkManager sweeps from its own isolate with its own object graph, so an
+  /// in-process `bool _inFlight` cannot see the other side. Without a claim the
+  /// same photograph gets uploaded twice, which on a metered link is a real
+  /// cost to a real person.
+  ///
+  /// [claimedAt] starts the task's lease - see [requeueStalled].
+  Future<Result<bool>> claim(String id, DateTime claimedAt);
+
+  /// Releases tasks whose lease expired back into the queue.
+  ///
+  /// A task is marked `uploading` before its bytes move. If the process is
+  /// killed at that moment - the user swipes the app away, Android reclaims
+  /// memory - the row is left `uploading` forever, and `uploading` is not an
+  /// eligible state, so that photograph would never be attempted again. This
+  /// is the sweeper for exactly that: anything claimed before [staleBefore] is
+  /// assumed abandoned and re-queued from byte zero.
+  Future<Result<int>> requeueStalled(DateTime staleBefore);
+
   Future<Result<void>> updateStatus(String id, UploadStatus status);
 
   Future<Result<void>> updateProgress(

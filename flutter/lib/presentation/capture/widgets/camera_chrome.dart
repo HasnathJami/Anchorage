@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:anchorage_harbor/core/utils/formatters.dart';
-import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
+import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:flutter/material.dart';
 
 /// A circular, translucent control that floats over the live preview.
@@ -18,6 +18,7 @@ class GlassCircleButton extends StatelessWidget {
     this.size = 40,
     this.iconSize = 20,
     this.filled = true,
+    this.tint,
     super.key,
   });
 
@@ -27,6 +28,10 @@ class GlassCircleButton extends StatelessWidget {
   final double size;
   final double iconSize;
   final bool filled;
+
+  /// Overrides the icon colour. Only ever *reinforces* a state the glyph
+  /// already carries - see [FlashButton].
+  final Color? tint;
 
   @override
   Widget build(BuildContext context) {
@@ -44,12 +49,47 @@ class GlassCircleButton extends StatelessWidget {
           child: SizedBox(
             width: size,
             height: size,
-            child: Icon(icon, size: iconSize, color: Colors.white),
+            child: Icon(icon, size: iconSize, color: tint ?? Colors.white),
           ),
         ),
       ),
     );
   }
+}
+
+/// The rule-of-thirds overlay.
+///
+/// Off by default and drawn at a very low opacity: composition guides that
+/// shout are worse than no guides, because the user starts framing to the
+/// lines instead of to the subject.
+class CompositionGrid extends StatelessWidget {
+  const CompositionGrid({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(size: Size.infinite, painter: _GridPainter()),
+    );
+  }
+}
+
+class _GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.22)
+      ..strokeWidth = 0.6;
+
+    for (int i = 1; i < 3; i++) {
+      final double x = size.width * i / 3;
+      final double y = size.height * i / 3;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GridPainter oldDelegate) => false;
 }
 
 /// The vertical zoom slider on the right edge.
@@ -58,91 +98,135 @@ class GlassCircleButton extends StatelessWidget {
 /// `RotatedBox`-wrapped Slider inverts its own gesture axis (dragging up
 /// decreases the value), and the reference design needs end labels inside the
 /// track, which Slider cannot express.
+///
+/// The visible track is narrow because the reference shows it narrow; the
+/// *touchable* area is padded out to a comfortable target, because a 30 dp
+/// column against the edge of the screen is not one.
 class VerticalZoomSlider extends StatelessWidget {
   const VerticalZoomSlider({
-    required this.settings,
+    required this.zoom,
+    required this.minZoom,
+    required this.maxZoom,
     required this.onZoomChanged,
-    this.height = 210,
+    this.height = 230,
     super.key,
   });
 
-  final CameraSettings settings;
+  final double zoom;
+  final double minZoom;
+  final double maxZoom;
   final ValueChanged<double> onZoomChanged;
   final double height;
 
   static const double _trackWidth = 30;
   static const double _knobSize = 16;
+  static const double _labelBox = 18;
+  static const double _touchPadding = 12;
+
+  /// 0 at the bottom (min zoom), 1 at the top.
+  double get _fraction => maxZoom <= minZoom
+      ? 0
+      : ((zoom - minZoom) / (maxZoom - minZoom)).clamp(0.0, 1.0);
 
   @override
   Widget build(BuildContext context) {
-    final HarborColorsAccess colors = HarborColorsAccess(context);
-    final double usable = height - _knobSize - 36;
+    // A sensor that cannot zoom gets no slider rather than a dead one.
+    if (maxZoom <= minZoom) return const SizedBox.shrink();
 
-    return SizedBox(
-      width: _trackWidth,
-      height: height,
+    return Semantics(
+      slider: true,
+      label: 'Zoom',
+      value: Formatters.zoom(zoom),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (DragUpdateDetails details) =>
-            _handleDrag(details.localPosition.dy, usable),
-        onTapDown: (TapDownDetails details) =>
-            _handleDrag(details.localPosition.dy, usable),
-        child: Container(
-          decoration: BoxDecoration(
-            color: colors.scrim,
-            borderRadius: BorderRadius.circular(_trackWidth / 2),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Column(
-            children: <Widget>[
-              _EndLabel(text: Formatters.zoom(settings.maxZoom)),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (BuildContext context, BoxConstraints constraints) {
-                    // Fraction 0 sits at the bottom (min zoom), 1 at the top.
-                    final double travel = constraints.maxHeight - _knobSize;
-                    final double top = travel * (1 - settings.zoomFraction);
-
-                    return Stack(
-                      alignment: Alignment.topCenter,
-                      children: <Widget>[
-                        Center(
-                          child: Container(
-                            width: 2,
-                            height: constraints.maxHeight,
-                            color: Colors.white.withValues(alpha: 0.18),
-                          ),
-                        ),
-                        Positioned(
-                          top: top.clamp(0.0, travel),
-                          child: Container(
-                            width: _knobSize,
-                            height: _knobSize,
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+            _handleDrag(details.localPosition.dy),
+        onTapDown: (TapDownDetails details) => _handleDrag(details.localPosition.dy),
+        child: Padding(
+          // Transparent margin that is still part of the hit target.
+          padding: const EdgeInsets.symmetric(horizontal: _touchPadding),
+          child: SizedBox(
+            width: _trackWidth,
+            height: height,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: context.harborColors.cameraScrim,
+                borderRadius: BorderRadius.circular(_trackWidth / 2),
+              ),
+              child: Padding(
+                // Keeps the end labels inside the pill's rounded caps.
+                padding: const EdgeInsets.symmetric(vertical: _capPadding),
+                child: Column(
+                  children: <Widget>[
+                    _EndLabel(text: Formatters.zoom(maxZoom)),
+                    Expanded(child: _Track(fraction: _fraction)),
+                    _EndLabel(text: Formatters.zoom(minZoom)),
+                  ],
                 ),
               ),
-              _EndLabel(text: Formatters.zoom(settings.minZoom)),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  void _handleDrag(double dy, double usable) {
-    if (usable <= 0) return;
-    // Invert: dragging towards the top of the screen zooms in.
-    final double fraction = (1 - ((dy - 18) / usable)).clamp(0.0, 1.0);
-    onZoomChanged(
-      settings.minZoom + fraction * (settings.maxZoom - settings.minZoom),
+  /// Padding above the top label, mirrored below the bottom one.
+  static const double _capPadding = 3;
+
+  void _handleDrag(double localDy) {
+    // The gesture box includes the two end labels and the pill's caps, so the
+    // usable travel is the box height less those, less the knob's diameter.
+    final double travel =
+        height - (2 * _labelBox) - (2 * _capPadding) - _knobSize;
+    if (travel <= 0) return;
+
+    final double fromTop =
+        (localDy - _labelBox - _capPadding - (_knobSize / 2)) / travel;
+    final double fraction = (1 - fromTop).clamp(0.0, 1.0);
+
+    onZoomChanged(minZoom + fraction * (maxZoom - minZoom));
+  }
+}
+
+class _Track extends StatelessWidget {
+  const _Track({required this.fraction});
+
+  final double fraction;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double travel = constraints.maxHeight - VerticalZoomSlider._knobSize;
+
+        return Stack(
+          alignment: Alignment.topCenter,
+          children: <Widget>[
+            Center(
+              child: Container(
+                width: 2,
+                height: constraints.maxHeight,
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
+            ),
+            Positioned(
+              top: (travel * (1 - fraction)).clamp(0.0, travel),
+              child: Container(
+                width: VerticalZoomSlider._knobSize,
+                height: VerticalZoomSlider._knobSize,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: <BoxShadow>[
+                    BoxShadow(color: Color(0x66000000), blurRadius: 4),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -154,68 +238,82 @@ class _EndLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 8,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.4,
+    return SizedBox(
+      height: VerticalZoomSlider._labelBox,
+      child: Center(
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+          ),
+        ),
       ),
     );
   }
 }
 
-/// The "0.5 / 1 / 2" lens pills.
+/// The round `0.5 / 1 / 2` quick-zoom buttons.
 ///
-/// The selected pill inverts to a solid white circle exactly as in the
+/// The selected button inverts to a solid white disc exactly as in the
 /// reference; the others stay translucent so they read as available options
 /// rather than as disabled ones.
-class LensSelector extends StatelessWidget {
-  const LensSelector({
-    required this.lenses,
-    required this.activeLens,
+///
+/// The selected button shows the *live* zoom rather than its own label
+/// whenever the two differ — pinch to 1.7x and the "1" reads "1.7x". That is
+/// what every platform camera app does, and it turns the row into an
+/// always-correct read-out instead of a set of buttons that lie between stops.
+class ZoomStopSelector extends StatelessWidget {
+  const ZoomStopSelector({
+    required this.stops,
+    required this.zoom,
     required this.onSelected,
     super.key,
   });
 
-  final List<CameraLens> lenses;
-  final CameraLens? activeLens;
-  final ValueChanged<CameraLens> onSelected;
+  final List<ZoomStop> stops;
+  final double zoom;
+  final ValueChanged<ZoomStop> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    // A single-lens device gets no selector at all rather than one pill that
-    // does nothing when tapped.
-    if (lenses.length < 2) return const SizedBox.shrink();
+    // One option is not a choice; a lone pill that does nothing when tapped is
+    // worse than no row at all.
+    if (stops.length < 2) return const SizedBox.shrink();
 
-    final HarborColorsAccess colors = HarborColorsAccess(context);
+    final ZoomStop? active = ZoomLadder.activeStop(stops, zoom);
+    final Color scrim = context.harborColors.cameraScrim;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: lenses.map((CameraLens lens) {
-        final bool selected = lens.id == activeLens?.id;
+      children: stops.map((ZoomStop stop) {
+        final bool selected = stop == active;
         final double size = selected ? 42 : 34;
+        final String label = selected && !ZoomLadder.isAt(stop, zoom)
+            ? Formatters.zoom(zoom)
+            : (selected ? '${stop.label}x' : stop.label);
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Semantics(
             button: true,
             selected: selected,
-            label: '${lens.label} times zoom',
+            label: '${stop.label} times zoom',
             child: GestureDetector(
-              onTap: () => onSelected(lens),
+              onTap: () => onSelected(stop),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 width: size,
                 height: size,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: selected ? Colors.white : colors.scrim,
+                  color: selected ? Colors.white : scrim,
                   shape: BoxShape.circle,
                 ),
                 child: Text(
-                  selected ? '${lens.label}x' : lens.label,
+                  label,
                   style: TextStyle(
                     color: selected ? const Color(0xFF101014) : Colors.white,
                     fontSize: selected ? 12 : 11,
@@ -281,6 +379,11 @@ class ShutterButton extends StatelessWidget {
 }
 
 /// Corner thumbnail of the newest shot with the batch count badge.
+///
+/// Tapping it opens the batch review sheet rather than jumping straight to the
+/// Upload Manager: the shots behind this badge have *not* been handed over
+/// yet, and the last cheap moment to drop a blurred frame is before it costs
+/// the field operator any bandwidth.
 class BatchThumbnail extends StatelessWidget {
   const BatchThumbnail({
     required this.count,
@@ -295,11 +398,11 @@ class BatchThumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final HarborColorsAccess colors = HarborColorsAccess(context);
-
     return Semantics(
       button: true,
-      label: '$count photograph${count == 1 ? '' : 's'} in this batch',
+      label: count == 0
+          ? 'No photographs in this batch yet'
+          : 'Review $count photograph${count == 1 ? '' : 's'} in this batch',
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
@@ -338,13 +441,17 @@ class BatchThumbnail extends StatelessWidget {
                   right: 0,
                   top: 0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    constraints: const BoxConstraints(minWidth: 20),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: colors.primary,
+                      color: context.harborColors.primary,
                       borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.white, width: 1.5),
                     ),
                     child: Text(
                       '$count',
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -405,15 +512,4 @@ class FocusReticle extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Small helper so the camera widgets read colours without four lines of
-/// `Theme.of(context).extension<...>()` each.
-class HarborColorsAccess {
-  HarborColorsAccess(BuildContext context)
-      : scrim = context.harborColors.cameraScrim,
-        primary = context.harborColors.primary;
-
-  final Color scrim;
-  final Color primary;
 }
