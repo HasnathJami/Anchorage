@@ -2,8 +2,7 @@
 
 **A two-app field-operations suite: know where you are, never lose what you captured.**
 
-Anchorage is the submission for the Senior App Developer Technical Assessment. It is one
-project containing two applications that share a name, a design language and an
+Anchorage is one project containing two applications that share a name, a design language and an
 architectural doctrine — and nothing else, because the brief asks for two genuinely
 independent stacks.
 
