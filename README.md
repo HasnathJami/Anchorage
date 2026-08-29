@@ -790,26 +790,127 @@ Full philosophy and per-suite detail: **[docs/TESTING.md](docs/TESTING.md)**.
 
 ## Screenshots
 
+Every capture below is from a real device — a Galaxy A54 running Android 16 — not a mockup.
 Reference designs supplied with the brief are in [`design/`](design/).
 
-### Anchorage Harbor (Flutter), captured on a Galaxy A54
+---
 
-| | | |
+### Task 1 — Anchorage Perimeter: the attendance flow
+
+| 1. Permission | 2. Nothing anchored | 3. The picker |
 | --- | --- | --- |
-| ![Camera with the focus reticle](docs/screenshots/harbor-camera-focus-reticle.png) | ![Capture settings](docs/screenshots/harbor-capture-settings.png) | ![Upload Manager](docs/screenshots/harbor-upload-manager.png) |
-| **Camera.** Tap-to-focus reticle — the ring cut at twelve o'clock with the AE/AF padlock in the gap — and the zoom slider spanning 0.5x – 8x across both rear cameras. | **Capture settings.** The composition grid and the two-outcome mock-response switch. Flash is absent on purpose: it lives on the top bar. | **Upload Manager.** Byte-weighted progress, the link chip, and the delivered rows. No back arrow — the system gesture and the bottom call to action both leave. |
+| <img src="docs/screenshots/perimeter-1-permission.png" width="240" /> | <img src="docs/screenshots/perimeter-2-no-office.png" width="240" /> | <img src="docs/screenshots/perimeter-3-office-picker.png" width="240" /> |
 
-### Still to capture
+| 4. Out of range | 5. In range, window closed |
+| --- | --- |
+| <img src="docs/screenshots/perimeter-4-out-of-range.png" width="240" /> | <img src="docs/screenshots/perimeter-5-in-range.png" width="240" /> |
 
-The Attendance screen's own captures are **not** in the repository yet. They need a device
-with a location fix, and the three states worth showing are the ones the brief's screenshot
-implies: no office anchored, out of range with a live distance, and in range with the button
-unlocked. [`docs/screenshots/README.md`](docs/screenshots/README.md) has the `adb` one-liner.
+**How the flow reads, step by step.**
 
-> A note before adding more: a camera preview captures whatever the lens is pointed at, and
-> this repository is public. The three above were chosen because their previews are dark or
-> covered. Point the phone at something neutral before capturing the rest, and check the
-> status bar for notification content.
+1. **The app asks for location the moment it opens.** No in-app banner offering to open a
+   dialog — the *system* dialog is the dialog. It asks once per visit; leaving the screen and
+   coming back asks again, so declining is not a one-way door. Only a permanent refusal earns
+   a banner, and only because Settings is then the sole route out.
+
+2. **Nothing is anchored yet.** `STEP 1: OFFICE CONTEXT` carries a grey status dot, the map
+   thumbnail reads *"No office anchored yet"*, the dial reads `--` over `NO OFFICE`, and the
+   check-in panel is locked behind a padlock. The screen states the one thing to do next:
+   *"Anchor your office above to start measuring distance."*
+
+3. **Set Office Location opens a real map.** OpenStreetMap tiles, a draggable pin, live
+   coordinates, and a crosshair that jumps to the current fix. The brief asks only for
+   "fetch the current GPS coordinates"; a picker was added because an office is a *place*, and
+   a person setting one usually wants the front door rather than wherever they happened to be
+   standing. **The map is not load-bearing** — with no network it degrades to a plain grid and
+   every control still works, because basements and car parks are exactly where offices get
+   anchored. Nothing is saved until `Set This Location` is pressed; backing out discards.
+
+4. **Out of range.** The pin above was placed a few kilometres away, and the screen answers
+   immediately: a red arc proportional to `distance / 50 m`, `3.6 km` in the middle,
+   `OUT OF RANGE`, and the instruction to move within 50 metres. The office card now offers
+   `Update Office Location` and records that this anchor was *placed by hand* rather than
+   measured — a hand-placed pin has no accuracy figure, so none is invented.
+
+5. **In range — and still locked.** Re-anchoring where the phone is standing turns the arc
+   green at `19m` with `IN RANGE`, and the button *stays* locked because it is 22:00 and the
+   window is `09:00 AM – 10:30 AM`. This is the whole design in one frame: **two independent
+   gates**, geofence and time, each saying so in its own words. Between the two captures the
+   distance moved 23 m → 19 m on its own, which is the live indicator working.
+
+The distance is a **Kotlin Flow** over `FusedLocationProviderClient` at a 2-second,
+high-accuracy cadence — not WorkManager, whose 15-minute floor makes it structurally unable
+to drive a live read-out. It runs only while the screen is in the foreground, and stops with
+it.
+
+---
+
+### Task 2 — Anchorage Harbor: capture and resilient sync
+
+| 1. Camera | 2. Tap to focus | 3. Capture settings |
+| --- | --- | --- |
+| <img src="docs/screenshots/harbor-1-camera.png" width="240" /> | <img src="docs/screenshots/harbor-2-focus-reticle.png" width="240" /> | <img src="docs/screenshots/harbor-3-capture-settings.png" width="240" /> |
+
+| 4. The batch | 5. Handed over | 6. Delivered | 7. Rejected |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/harbor-4-batch-review.png" width="185" /> | <img src="docs/screenshots/harbor-5-handoff-toast.png" width="185" /> | <img src="docs/screenshots/harbor-6-upload-manager.png" width="185" /> | <img src="docs/screenshots/harbor-7-rejected.png" width="185" /> |
+
+**How the flow reads, step by step.**
+
+1. **The camera.** Full-bleed preview under floating chrome: close, flash, settings, the
+   `BATCH CAPTURE` caption, a vertical zoom slider labelled at both ends, the `0.5 / 1x / 2`
+   quick-zoom pills, thumbnail, shutter and lens flip. The slider spans **0.5x – 8x across
+   both rear cameras** — on this phone every sensor reports 1.0–8.0 of its own zoom, so 0.5x
+   means *opening the ultra-wide*, and the app does that at the end of the gesture rather
+   than mid-pinch, so the preview never flashes.
+
+2. **Tap to focus.** A ring cut at twelve o'clock with the AE/AF padlock sitting *in* the
+   gap — the way platform camera apps draw it — plus a brightness slider for exposure
+   compensation at that point. The tap is mapped through the preview's crop before it reaches
+   the sensor: the preview is painted to *cover*, so about 40% of the sensor's width never
+   reaches the glass, and passing raw screen coordinates focuses somewhere the user did not
+   touch.
+
+3. **Capture settings.** The rule-of-thirds grid and the mock-response switch. Two outcomes,
+   `SUCCESS` and `FAILED`, because a server has two answers. Connection loss and low
+   bandwidth are deliberately *not* here — they are conditions of the link, read from the
+   device. Flash is absent too: it lives on the top bar, and one setting deserves one control.
+
+4. **The batch.** `Current batch · 3 · 487 KB`, with every frame droppable before hand-over.
+   Nothing here has touched the sync engine yet, which is what makes deleting a blurred shot
+   free.
+
+5. **Hand-over.** `UPLOAD (3)` moves the batch into the durable queue and confirms with a
+   toast across the **top** of the screen — deliberately not the bottom, where a snackbar
+   would cover the shutter the user is about to press again. It carries a `VIEW` action and
+   clears itself after 2.5 s.
+
+6. **Delivered.** The Upload Manager: byte-weighted progress, a three-state link chip, and a
+   row per photograph naming its own state in the reference's own words.
+
+7. **Rejected.** With the mock set to `FAILED`, a row climbs through jittered backoff and
+   lands on `REJECTED BY SERVER` with per-row retry and discard. It is a **retryable 500**, so
+   `RetryPolicy` — not the mock — decides when to stop, after three attempts. Attempts are
+   only ever spent on the server's own failures: losing the network parks a row indefinitely
+   without touching the counter. Re-opening this screen re-arms everything recoverable and
+   sweeps, which is why steps 6 and 7 needed no button press to get moving.
+
+---
+
+### What is not pictured
+
+Two states could not be captured honestly on the day:
+
+* **A successful check-in**, because the window is `09:00 AM – 10:30 AM` and these were taken
+  at 22:00. Capture 5 shows the gate doing its job instead; the success state is a green
+  `CHECKED IN` pill with the time and distance of the record.
+* **The attendance history list with entries**, for the same reason — it currently shows its
+  empty state.
+
+> **Before making this repository public:** `perimeter-5-in-range.png` contains real
+> coordinates of wherever the phone was standing, because an "in range" screenshot is by
+> definition taken at the anchored office. `perimeter-3-office-picker.png` was deliberately
+> panned to a neutral part of the city for the same reason. Camera previews were kept dark on
+> purpose. Retake any capture you are not comfortable publishing.
 
 ---
 
