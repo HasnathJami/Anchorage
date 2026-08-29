@@ -83,6 +83,17 @@ class AttendanceViewModel @Inject constructor(
     /** Whether the screen is in the foreground. See the class doc. */
     private var isScreenVisible: Boolean = false
 
+    /** @see requestPermissionOnEntry */
+    private var hasRequestedPermissionOnEntry: Boolean = false
+
+    /**
+     * True between opening the system permission dialog and hearing back.
+     *
+     * The dialog pauses the activity, so without this the pause it causes
+     * would look like the user leaving the screen and would re-arm the ask.
+     */
+    private var awaitingPermissionResult: Boolean = false
+
     /**
      * The last position the stream reported, kept across restarts.
      *
@@ -122,20 +133,46 @@ class AttendanceViewModel @Inject constructor(
         // permission check is what the lifecycle observer sends when it starts.
         isScreenVisible = true
 
+        _uiState.update { it.copy(hasLocationPermission = granted) }
+
         if (granted) {
             if (_uiState.value.notice.isPermissionNotice()) {
                 _uiState.update { it.copy(notice = null) }
             }
             syncObservation()
-        } else {
-            stopObserving()
-            _uiState.update {
-                it.copy(
-                    isBootstrapping = false,
-                    notice = it.notice ?: AttendanceNotice.PermissionRequired,
-                )
-            }
+            return
         }
+
+        stopObserving()
+        _uiState.update { it.copy(isBootstrapping = false) }
+
+        // Ask with the real dialog rather than drawing one. See
+        // [requestPermissionOnEntry] for why this cannot simply fire whenever
+        // permission is missing.
+        requestPermissionOnEntry()
+    }
+
+    /**
+     * Opens the system permission dialog, once per visit to the screen.
+     *
+     * The guard is not optional. `repeatOnLifecycle` re-delivers the permission
+     * state every time the screen resumes, and **the permission dialog itself
+     * pauses the activity** - so a request driven straight off "not granted"
+     * would re-open itself the instant the user declined it, forever. The same
+     * flag is what the office picker uses, for the same reason.
+     *
+     * It is cleared when the screen genuinely goes away (see [onScreenStopped]),
+     * so a user who declined can come back and be asked again, rather than
+     * being locked out of a screen with no way to change their mind. Android
+     * escalates repeated refusals to "don't ask again" by itself, and at that
+     * point [AttendanceNotice.PermissionBlocked] takes over with a route to
+     * Settings.
+     */
+    private fun requestPermissionOnEntry() {
+        if (hasLocationPermission || hasRequestedPermissionOnEntry) return
+        hasRequestedPermissionOnEntry = true
+        awaitingPermissionResult = true
+        emitEffect(AttendanceEffect.RequestLocationPermission)
     }
 
     /**
@@ -147,27 +184,43 @@ class AttendanceViewModel @Inject constructor(
     private fun onScreenStopped() {
         isScreenVisible = false
         stopObserving()
+
+        // A real departure re-arms the ask, so someone who declined and came
+        // back is asked again. The pause caused by the permission dialog is
+        // not a departure and must not re-arm it - that is the difference
+        // between asking once per visit and asking in a loop.
+        if (!awaitingPermissionResult) hasRequestedPermissionOnEntry = false
     }
 
     private fun onPermissionResult(intent: AttendanceIntent.PermissionResult) {
+        awaitingPermissionResult = false
+
         when {
             intent.granted -> onPermissionStateChanged(granted = true)
 
-            // Denied and the OS will not ask again: only Settings can help, so
-            // the banner has to change its offer rather than repeat itself.
+            // Denied and the OS will not ask again. This is the one permission
+            // state that still earns a banner, because it is the one the
+            // system dialog cannot fix: only Settings can, and an app that
+            // does not say so is a dead end.
             !intent.canAskAgain -> _uiState.update {
-                it.copy(isBootstrapping = false, notice = AttendanceNotice.PermissionBlocked)
+                it.copy(
+                    isBootstrapping = false,
+                    hasLocationPermission = false,
+                    notice = AttendanceNotice.PermissionBlocked,
+                )
             }
 
+            // Declined, but Android will still ask. No banner: the caption
+            // under the dial explains why it is empty, and leaving the screen
+            // re-arms the request.
             else -> _uiState.update {
-                it.copy(isBootstrapping = false, notice = AttendanceNotice.PermissionRequired)
+                it.copy(isBootstrapping = false, hasLocationPermission = false)
             }
         }
     }
 
     private fun onNoticeAction() {
         when (_uiState.value.notice) {
-            AttendanceNotice.PermissionRequired -> emitEffect(AttendanceEffect.RequestLocationPermission)
             AttendanceNotice.PermissionBlocked -> emitEffect(AttendanceEffect.OpenAppSettings)
             AttendanceNotice.LocationServicesOff -> emitEffect(AttendanceEffect.OpenLocationSettings)
             is AttendanceNotice.WeakSignal -> restartObserving()
@@ -318,7 +371,9 @@ class AttendanceViewModel @Inject constructor(
     // ------------------------------------------------------------ translation
 
     private fun AppError.toNotice(): AttendanceNotice? = when (this) {
-        is AppError.Location.PermissionDenied -> AttendanceNotice.PermissionRequired
+        // The stream reporting a denial raises nothing: the screen has already
+        // asked, and the caption under the dial says why it is empty.
+        is AppError.Location.PermissionDenied -> null
         is AppError.Location.PermissionPermanentlyDenied -> AttendanceNotice.PermissionBlocked
         is AppError.Location.ServicesDisabled -> AttendanceNotice.LocationServicesOff
         is AppError.Location.InsufficientAccuracy -> AttendanceNotice.AnchorRejected(
@@ -359,7 +414,7 @@ class AttendanceViewModel @Inject constructor(
     }
 
     private fun AttendanceNotice?.isPermissionNotice(): Boolean =
-        this == AttendanceNotice.PermissionRequired || this == AttendanceNotice.PermissionBlocked
+        this == AttendanceNotice.PermissionBlocked
 
     /**
      * Notices the ambient location stream is not allowed to clear: permission

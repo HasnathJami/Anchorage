@@ -11,6 +11,8 @@ import com.anchorage.perimeter.domain.usecase.MarkAttendanceUseCase
 import com.anchorage.perimeter.domain.usecase.ObserveAttendanceStatusUseCase
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -82,15 +84,84 @@ class AttendanceViewModelTest {
     // ------------------------------------------------------------- permissions
 
     @Test
-    fun `starts with the permission banner and no observation`() = runTest(dispatcher) {
+    fun `asks with the system dialog on entry rather than drawing a banner`() =
+        runTest(dispatcher) {
+            val effects = mutableListOf<AttendanceEffect>()
+            val collector = launch { viewModel.effects.toList(effects) }
+
+            viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
+            advanceUntilIdle()
+
+            assertThat(effects).contains(AttendanceEffect.RequestLocationPermission)
+
+            val state = viewModel.uiState.value
+            assertThat(state.notice).isNull()
+            assertThat(state.hasLocationPermission).isFalse()
+            assertThat(state.isBootstrapping).isFalse()
+            assertThat(state.canMarkAttendance).isFalse()
+
+            collector.cancel()
+        }
+
+    @Test
+    fun `does not ask twice for the same visit`() = runTest(dispatcher) {
+        // The permission dialog pauses the activity, so `repeatOnLifecycle`
+        // re-delivers the state the moment it closes. Without the guard the
+        // request would re-open itself the instant the user declined it.
+        val effects = mutableListOf<AttendanceEffect>()
+        val collector = launch { viewModel.effects.toList(effects) }
+
+        viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
+        advanceUntilIdle()
+        viewModel.onIntent(
+            AttendanceIntent.PermissionResult(granted = false, canAskAgain = true),
+        )
+        advanceUntilIdle()
         viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertThat(state.notice).isEqualTo(AttendanceNotice.PermissionRequired)
-        assertThat(state.isBootstrapping).isFalse()
-        assertThat(state.canMarkAttendance).isFalse()
+        assertThat(effects.count { it == AttendanceEffect.RequestLocationPermission })
+            .isEqualTo(1)
+
+        collector.cancel()
     }
+
+    @Test
+    fun `leaving the screen re-arms the ask`() = runTest(dispatcher) {
+        // Someone who declined must not be locked out of a screen with no way
+        // to change their mind.
+        val effects = mutableListOf<AttendanceEffect>()
+        val collector = launch { viewModel.effects.toList(effects) }
+
+        viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
+        advanceUntilIdle()
+        viewModel.onIntent(
+            AttendanceIntent.PermissionResult(granted = false, canAskAgain = true),
+        )
+        advanceUntilIdle()
+
+        viewModel.onIntent(AttendanceIntent.ScreenStopped)
+        viewModel.onIntent(AttendanceIntent.PermissionStateChanged(granted = false))
+        advanceUntilIdle()
+
+        assertThat(effects.count { it == AttendanceEffect.RequestLocationPermission })
+            .isEqualTo(2)
+
+        collector.cancel()
+    }
+
+    @Test
+    fun `a permanent denial still earns a banner, because Settings is the only way out`() =
+        runTest(dispatcher) {
+            viewModel.onIntent(
+                AttendanceIntent.PermissionResult(granted = false, canAskAgain = false),
+            )
+            advanceUntilIdle()
+
+            assertThat(viewModel.uiState.value.notice)
+                .isEqualTo(AttendanceNotice.PermissionBlocked)
+            assertThat(viewModel.uiState.value.hasLocationPermission).isFalse()
+        }
 
     @Test
     fun `a hard denial escalates the banner to blocked`() = runTest(dispatcher) {

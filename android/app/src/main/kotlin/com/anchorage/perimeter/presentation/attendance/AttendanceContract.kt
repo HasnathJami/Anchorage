@@ -44,6 +44,17 @@ data class AttendanceUiState(
     val notice: AttendanceNotice? = null,
 
     val canMarkAttendance: Boolean = false,
+
+    /**
+     * False once the user has been asked and has said no.
+     *
+     * Not a banner. The screen asks with the *system* dialog on entry, so the
+     * only thing left to say afterwards is why the dial is empty - and that
+     * belongs in the caption under it, next to the thing it explains, rather
+     * than in a panel at the top of the screen repeating an offer the user has
+     * already declined.
+     */
+    val hasLocationPermission: Boolean = true,
 ) {
     val isOfficeConfigured: Boolean get() = anchor != null
 
@@ -82,7 +93,15 @@ enum class ProximityUi {
 sealed interface AttendanceNotice {
 
     /** Permission not granted yet, and the system dialog can still be shown. */
-    data object PermissionRequired : AttendanceNotice
+    // `PermissionRequired` used to live here.
+    //
+    // It was a banner that said "Location permission needed" over a button
+    // that opened the system dialog - an in-app dialog whose only job was to
+    // summon the real one. The screen now asks directly on entry, which is one
+    // fewer tap in the common case and one fewer thing to read. What survives
+    // is [PermissionBlocked], and only because the system dialog genuinely
+    // cannot help there: Android will not show it again, so Settings is the
+    // only route and an app that does not offer it is a dead end.
 
     /** Permission denied permanently; only app settings can fix it. */
     data object PermissionBlocked : AttendanceNotice

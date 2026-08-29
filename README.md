@@ -105,6 +105,48 @@ requires.
 * **Window closed** — the caption under the button flips from `AVAILABLE 09:00 AM - 10:30 AM`
   to `WINDOW CLOSED`, in amber.
 
+### Why the live distance is coroutines, and not WorkManager
+
+The obvious question for anything that updates by itself on Android, and the answer is not
+close. **WorkManager is the wrong tool for this and cannot do the job at all.**
+
+| | Kotlin Flow over `FusedLocationProviderClient` | WorkManager |
+| --- | --- | --- |
+| Update cadence | Whatever the request asks for — here **2 seconds** | Periodic work has a **15-minute minimum**, and the OS may delay it further |
+| Purpose | Live UI on a screen the user is looking at | Deferrable work that must survive process death |
+| Lifecycle | Bound to the screen; stops when it stops | Deliberately *outlives* the app, which is the opposite of what is wanted |
+| Cost of misuse | — | A "real-time" indicator that refreshes a quarter of an hour after you have walked away |
+
+A distance read-out is the textbook case *for* a hot stream and *against* a job scheduler: it
+is only interesting while someone is watching it, it must be immediate, and it must stop the
+instant they stop watching. WorkManager exists for the opposite shape of problem — the Flutter
+app uses it for exactly that, to drain the upload queue when the app is closed.
+
+So the chain is a plain coroutine one, and every link is cancellable:
+
+```
+FusedLocationProviderClient
+  └─ callbackFlow          PRIORITY_HIGH_ACCURACY, 2 s interval, no distance filter,
+     │                     seeded from the platform's last known fix so the dial reads
+     │                     immediately rather than after the first satellite reply
+     └─ combine            with the saved anchor and today's record
+        └─ scan            carries the last fix forward for hysteresis and re-anchoring
+           └─ StateFlow    collected by Compose with `collectAsStateWithLifecycle`
+```
+
+`awaitClose { removeLocationUpdates(callback) }` is what makes cancellation real: stopping
+the collection genuinely unregisters the receiver rather than merely dropping its output.
+
+**One bug worth recording here**, because it is invisible in code review and intermittent on
+a device. Registration used the `Looper` overload with `null`, which means *"deliver on the
+calling thread's Looper"* — and the `callbackFlow` block runs on `dispatchers.io`, a pool
+thread that has no Looper at all. Play Services then throws while wiring up the callback, the
+stream ends before a single update arrives, and the screen sits on `LOCATING` having
+effectively asked for nothing. It now registers with an **`Executor`**, which has no Looper
+requirement, and the registration call catches `Throwable` rather than only
+`SecurityException` — what comes back from Play Services across the long tail of Android
+devices is not all one exception type, and this class's contract is that it never throws.
+
 ### The distance updates reactively, and it does not twitch
 
 The brief asks for a *real-time* distance indicator, and "real-time" is where this screen is
@@ -165,12 +207,22 @@ merely stopping delivery. The ViewModel cancels its observation job in `onCleare
 text scale a fixed box crops its own label, which is the one failure a button cannot afford,
 and the whole screen scrolls so a short phone loses nothing off the bottom.
 
+**Permission is asked for, not advertised.** The screen opens the *system* dialog on entry
+rather than drawing a banner that offers to open it — one fewer tap in the common case, and
+one fewer thing to read. The guard matters: `repeatOnLifecycle` re-delivers the permission
+state on every resume and **the permission dialog itself pauses the activity**, so a request
+driven straight off "not granted" would re-open itself the instant the user declined it,
+forever. It asks once per visit, and a genuine departure re-arms it — so declining is not a
+one-way door, while Android’s own escalation to "don’t ask again" hands over to the Settings
+banner.
+
 **Failures are values, and every one of them has a remedy on screen:**
 
 | Condition | What the user sees | What they can do about it |
 | --- | --- | --- |
-| Permission never asked | `Location permission needed` | **Grant permission** — the system dialog |
-| Permission blocked forever | `Location access is blocked` | **Open settings** — because the dialog will never appear again, and repeating the offer would be a lie |
+| Permission never asked | *Nothing.* The **system dialog** opens on entry | Answer it. An in-app banner whose only job is to summon the real dialog is a dialog about a dialog |
+| Declined, but Android will still ask | The dial caption reads `NO ACCESS` and says why | Leave the screen and come back — that re-arms the request |
+| Permission blocked forever | `Location access is blocked` | **Open settings** — the one permission state that still earns a banner: the system dialog genuinely cannot help, and an app that does not say so is a dead end |
 | Location services switched off | `Location is switched off` | **Open location settings** |
 | No position available | *Nothing.* The dial holds the last known distance and the stream recovers by itself | Nothing to do — a banner here interrupted a screen that was still correct, to offer a Retry that changed nothing |
 | Fix too coarse to anchor | The measured accuracy, and the accuracy required | **Try again** |
@@ -719,16 +771,16 @@ over pure domain code, with fakes standing in for hardware.
 | `android core/common/` | 6 | `Outcome` combinators |
 | `android domain/` | 59 | Haversine arithmetic, geofence policy + hysteresis, attendance window, all five use cases, and re-measuring the instant the office is set or moved |
 | `android data/` | 17 | DataStore round-trip and corruption tolerance, Room date/timezone handling, location preflight |
-| `android presentation/` | 55 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
+| `android presentation/` | 58 | MVI reduction, permission escalation, every rejection path, formatters, and the position stream stopping with the screen |
 | `android architecture/` | 6 | The dependency rule itself — see [How the layers are enforced](#project-structure-and-architectural-approach) |
 | `flutter` | 321 | Camera Bloc (55), sync engine incl. claim, lease, the bandwidth watchdog and the three-attempt budget (34), sync domain (22), zoom span across lenses (17), formatters (16), camera chrome widgets (17), upload manager Bloc incl. the six sweep triggers, the re-arm on opening and the heartbeat backoff (23), zoom range (13), exposure range (13), zoom ladder (12), preview crop / tap-to-focus geometry (12), the device matrix (24), camera page: alignment + exit flow (10), mock transport (10), bandwidth policy (8), exit dialog (8), upload manager widgets (8), flash policy (7), top toast (6), architecture (4) |
-| **Total** | **464** | |
+| **Total** | **467** | |
 
 Plus 5 Compose instrumentation tests (`./gradlew connectedDebugAndroidTest`) that
 require a device or emulator.
 
 ```bash
-cd android  && ./gradlew testDebugUnitTest   # 143 tests
+cd android  && ./gradlew testDebugUnitTest   # 146 tests
 cd ../flutter && flutter test        # 321 tests
 ```
 

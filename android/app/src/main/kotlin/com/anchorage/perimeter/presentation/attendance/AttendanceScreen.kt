@@ -453,7 +453,7 @@ private fun AttendanceNoOfficePreview() {
             state = AttendanceUiState(
                 isBootstrapping = false,
                 windowLabel = "09:00 AM - 10:30 AM",
-                notice = AttendanceNotice.PermissionRequired,
+                hasLocationPermission = false,
             ),
             snackbarHostState = SnackbarHostState(),
             onBack = {},

@@ -178,6 +178,10 @@ rather than blocking mock locations. Match that standard.
 | Thing | Decision | Why |
 | --- | --- | --- |
 | Geofence hysteresis | Entry at 50 m, exit at 58 m — on the **dial only** | GPS jitter strobes a bare threshold. The check-in itself uses the true 50 m with no forgiveness. |
+| Location updates register with an **`Executor`**, never a null `Looper` | `requestLocationUpdates(request, dispatchers.io.asExecutor(), callback)` | The `Looper` overload treats `null` as "the calling thread's", and the `callbackFlow` runs on `dispatchers.io`, which has none. Play Services throws while wiring the callback, the stream ends before one update arrives, and the screen sits on `LOCATING` having asked for nothing. Intermittent, invisible in review, and the cause of "it does not update when I move". |
+| Live distance is a **Flow**, never WorkManager | `callbackFlow` at 2 s, `PRIORITY_HIGH_ACCURACY`, no distance filter | WorkManager's periodic minimum is **15 minutes** and it is built to outlive the app - the opposite of a read-out that is only interesting while someone is watching it. WorkManager is right for the Flutter upload queue and wrong for this. |
+| Location permission is **asked for**, not advertised | The system dialog on entry; no `PermissionRequired` banner | A banner whose only button opens the real dialog is a dialog about a dialog. Ask once per visit - `repeatOnLifecycle` re-delivers the state on every resume and the permission dialog *itself* pauses the activity, so an unguarded request re-opens itself forever. A real departure re-arms it; `PermissionBlocked` survives because Settings is then the only route out. |
+| App identity | Name **Anchorage Perimeter**, stock Android Studio launcher icon | Neither app in this repository carries branding of its own; the icon is the default green robot on purpose, not by omission. In-app copy names the app in full, so the launcher and the exit dialog agree. |
 | The position stream | Runs only while permission **and** visibility both hold | `viewModelScope` outlives the screen being visible, so gating on permission alone left the GPS running behind the home screen indefinitely. `repeatOnLifecycle(RESUMED)` cancelling its block is the only signal that the screen has gone - that is what the `finally` in `AttendanceScreen` is for. There is a test that asserts the collector count drops to zero. |
 | The last fix survives an observation restart | `AttendanceStatus.lastFix` in, `initialFix` back out | Stopping the stream is what saves the battery; losing the position with it is what made the screen blink. Returning from the office picker tore down the observation and started a fresh one with nothing carried forward, so the dial dropped to `--` or sat on `LOCATING` and then *jumped* to the new distance. The two must be fixed together - never reintroduce the stop without the carry. |
 | `PositionUnavailable` raises no banner on Attendance | Removed; the picker keeps its own | The dial holds the last known distance through a dropout and the stream recovers by itself, so the banner interrupted a screen that was still correct to offer a Retry that changed nothing. A momentary condition with no *distinct* remedy is not a notice. The picker is different: it needs a position to centre on, so there Retry does something. |
@@ -245,7 +249,7 @@ file has a group per rule. If you add a rule, add its group.
 **Never assert on randomness directly.** Assert on bounds, on caps, and on variance across
 seeds.
 
-Current state: **143 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
+Current state: **146 Android unit tests**, **321 Flutter tests**, plus 5 Compose instrumentation
 tests. `flutter analyze` is clean. Keep it that way.
 
 ---

@@ -17,6 +17,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -94,12 +95,34 @@ class FusedLocationTracker @Inject constructor(
             }
 
             try {
-                fusedClient.requestLocationUpdates(request, callback, null).addOnFailureListener {
+                // **An Executor, never a null Looper.** The overload that takes
+                // a `Looper` treats `null` as "use the calling thread's", and
+                // this block runs on `dispatchers.io` - a pool thread that has
+                // no Looper at all. Play Services then throws while wiring up
+                // its callback, the stream ends before a single update
+                // arrives, and the screen sits on "Acquiring a satellite fix"
+                // having asked for nothing. That is the intermittent
+                // "it does not update when I move".
+                //
+                // The Executor overload has no Looper requirement, and keeping
+                // the callbacks off the main thread costs nothing: `trySend`
+                // is safe from any thread.
+                fusedClient.requestLocationUpdates(
+                    request,
+                    dispatchers.io.asExecutor(),
+                    callback,
+                ).addOnFailureListener {
                     trySend(Outcome.Failure(it.toLocationError()))
                 }
             } catch (security: SecurityException) {
                 // Permission revoked between the preflight and this call.
                 trySend(Outcome.Failure(AppError.Location.PermissionDenied(security)))
+            } catch (throwable: Throwable) {
+                // Registration crosses into Play Services, and what comes back
+                // from it on the long tail of Android devices is not all
+                // `SecurityException`. This class's contract is that it never
+                // throws, so the catch has to be as wide as the contract.
+                trySend(Outcome.Failure(throwable.toLocationError()))
             }
 
             awaitClose { fusedClient.removeLocationUpdates(callback) }

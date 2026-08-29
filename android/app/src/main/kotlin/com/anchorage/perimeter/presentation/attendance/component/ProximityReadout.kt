@@ -84,6 +84,9 @@ fun ProximityReadout(
 
     val captionLabel = when {
         reading != null -> stringResource(R.string.attendance_dial_away)
+        // Ahead of the office check: with no permission there is nothing to
+        // measure *from*, so "no office" would blame the wrong thing.
+        !state.hasLocationPermission -> stringResource(R.string.attendance_dial_no_permission)
         state.anchor == null -> stringResource(R.string.attendance_dial_no_office)
         else -> stringResource(R.string.attendance_dial_locating)
     }
@@ -163,6 +166,12 @@ private fun helperText(state: AttendanceUiState): String {
     val record = state.todayRecord
 
     return when {
+        // The screen asks for permission with the system dialog on entry, so
+        // this is not an offer - it is the explanation for an empty dial, and
+        // it says how to get out of the state.
+        !state.hasLocationPermission ->
+            stringResource(R.string.attendance_helper_no_permission)
+
         record != null -> stringResource(
             R.string.attendance_helper_marked,
             AttendanceFormatters.clockTime(record.markedAtEpochMillis),

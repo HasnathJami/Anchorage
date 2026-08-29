@@ -36,15 +36,6 @@ fun NoticeBanner(
     val colors = AnchorageTheme.colors
 
     val descriptor = when (notice) {
-        AttendanceNotice.PermissionRequired -> NoticeDescriptor(
-            title = stringResource(R.string.notice_permission_required_title),
-            message = stringResource(R.string.notice_permission_required_body),
-            action = stringResource(R.string.notice_permission_required_action),
-            icon = Icons.Outlined.LocationOff,
-            container = colors.primarySubtle,
-            content = colors.primary,
-        )
-
         AttendanceNotice.PermissionBlocked -> NoticeDescriptor(
             title = stringResource(R.string.notice_permission_blocked_title),
             message = stringResource(R.string.notice_permission_blocked_body),
