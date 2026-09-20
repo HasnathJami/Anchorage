@@ -3,6 +3,23 @@ import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/capture_batch.dart';
 
+// ── CAMERA PORT ──────────────────────────────────────────────────────────
+//
+// What the camera screen needs a camera to do, stated without naming any
+// plugin. Implemented by CameraPluginAdapter over the `camera` package.
+//
+// The contract every method shares: THIS NEVER THROWS. Vendor camera code
+// on the long tail of Android devices raises PlatformException, CameraException
+// and bare StateError alike, and any one of them escaping would kill the
+// screen. Every refusal comes back as a typed Failure instead.
+//
+// That matters more here than anywhere else in the app, because the plugin
+// offers no way to ASK what a device supports. Whether this phone has a
+// flash, a front camera, or a controllable metering point is discovered by
+// ATTEMPTING the thing and translating the refusal - which is why
+// FlashUnavailableFailure and MeteringUnavailableFailure exist as their own
+// cases. A control the hardware ignores is then simply not drawn.
+
 /// The domain's view of the camera hardware.
 ///
 /// Everything the `camera` plugin exposes is hidden behind this port, for one

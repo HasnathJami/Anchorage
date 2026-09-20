@@ -11,6 +11,25 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/*
+ * ── THE DESIGN SYSTEM ────────────────────────────────────────────────────
+ *
+ * Anchorage never writes a raw colour, size or corner radius at a call site.
+ * Screens reach for a *named role* instead:
+ *
+ *     AnchorageTheme.colors.dangerArc      not  Color(0xFFE5484D)
+ *     AnchorageTheme.spacing.md            not  16.dp
+ *     AnchorageTheme.shapes.card           not  RoundedCornerShape(20.dp)
+ *
+ * Two payoffs. A designer changing "danger" changes it everywhere at once,
+ * and the *reason* a pixel is red survives into the code where the next
+ * reader can see it.
+ *
+ * This file wires the three token sets into Compose's CompositionLocal
+ * system, which is what makes `AnchorageTheme.colors` reachable from any
+ * composable below the theme without passing anything down by hand.
+ */
+
 /** Corner radii, named for the component that owns them. */
 data class AnchorageShapes(
     val card: Shape = RoundedCornerShape(20.dp),

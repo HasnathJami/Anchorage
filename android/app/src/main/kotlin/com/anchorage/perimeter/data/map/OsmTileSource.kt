@@ -17,24 +17,35 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * OpenStreetMap raster tiles over plain HTTP.
+ * Downloads map tile images from OpenStreetMap.
  *
- * **This class never throws.** Every `IOException`, DNS failure, timeout and
- * non-200 response is translated into an [AppError.MapTiles] case and returned
- * as a value. A camera-shy tile server must not be able to take down the
- * screen the user is standing in the car park trying to use.
+ * **This is the only outbound network call in the entire Android app.**
+ * Everything else is on-device.
  *
- * No OkHttp, no Retrofit: one `GET` returning a few KB of PNG does not justify
- * a networking stack, and `HttpURLConnection` keeps the dependency list - and
- * the APK - where it is.
+ * ## This class never throws
  *
- * Two policy details that are not optional:
+ * Every `IOException`, DNS failure, timeout and non-200 response is
+ * translated into an [AppError.MapTiles] case and returned as a value. A
+ * tile server having a bad day must not be able to take down the screen a
+ * user is standing in a car park trying to use — the picker falls back to a
+ * plain grid and a pin can still be dropped.
  *
- *  * **A real `User-Agent`.** OSM's tile usage policy rejects requests with a
- *    default or absent agent, and Java sends one that looks like a bot. A 403
- *    with no explanation is the failure mode this line prevents.
- *  * **Attribution.** The imagery is ODbL-licensed; [attribution] is rendered
- *    on the map and is not decoration.
+ * ## Why `HttpURLConnection` and not OkHttp or Retrofit
+ *
+ * One `GET` returning a few kilobytes of PNG does not justify a networking
+ * stack. `HttpURLConnection` is in the JDK, so the dependency list — and the
+ * APK — stay where they are.
+ *
+ * ## Two policy details that are not optional
+ *
+ * - **A real `User-Agent`.** OpenStreetMap's tile usage policy rejects
+ *   requests with a default or absent agent, and Java sends one that looks
+ *   like a bot. A 403 with no explanation is the failure mode that one line
+ *   prevents.
+ * - **Attribution.** The imagery is ODbL-licensed. [attribution] is rendered
+ *   on the map and is a legal requirement, not decoration.
+ *
+ * @param dispatchers Supplies the IO thread the request runs on.
  */
 @Singleton
 class OsmTileSource @Inject constructor(
@@ -42,18 +53,27 @@ class OsmTileSource @Inject constructor(
 ) : MapTileSource {
 
     /**
-     * Small in-memory cache, sized in tiles rather than bytes.
+     * A small in-memory cache, sized in tiles rather than bytes.
      *
-     * A pan gesture revisits the same tiles constantly; without this every
+     * A pan gesture revisits the same tiles constantly; without this, every
      * wobble of a thumb is a fresh HTTP request. 128 tiles is roughly nine
-     * screenfuls at this tile size - enough to make panning feel free, small
-     * enough (~10 MB of PNG) to be irrelevant to the heap.
+     * screenfuls at this tile size — enough to make panning feel free, small
+     * enough (about 10 MB of PNG) to be irrelevant to the heap.
      */
     private val cache = LruCache<TileCoordinate, ByteArray>(CACHE_ENTRIES)
 
     override val attribution: String = "© OpenStreetMap contributors"
 
+    /**
+     * Fetches one tile, from the cache when possible.
+     *
+     * @param tile Which tile to fetch.
+     * @return The PNG bytes, or a typed [AppError.MapTiles] failure. Never
+     *   throws, except [CancellationException].
+     */
     override suspend fun load(tile: TileCoordinate): Outcome<ByteArray> {
+        // Step 1 - fold an out-of-range column back into the grid, which is
+        // what panning past the anti-meridian produces.
         val normalised = tile.wrapped()
         if (!normalised.isValid) {
             // Above the north edge or below the south edge: there is no tile
@@ -63,8 +83,10 @@ class OsmTileSource @Inject constructor(
             return Outcome.Failure(AppError.MapTiles.ServerRejected(statusCode = HTTP_NOT_FOUND))
         }
 
+        // Step 2 - already downloaded? Then no request at all.
         cache.get(normalised)?.let { return Outcome.Success(it) }
 
+        // Step 3 - go to the network, on an IO thread.
         return withContext(dispatchers.io) {
             var connection: HttpURLConnection? = null
             try {
@@ -102,8 +124,8 @@ class OsmTileSource @Inject constructor(
             } catch (io: IOException) {
                 Outcome.Failure(AppError.MapTiles.Offline(cause = io))
             } catch (throwable: Throwable) {
-                // The contract is "never throws", and that has to hold for the
-                // failure nobody predicted too.
+                // The contract is "never throws", and that has to hold for
+                // the failure nobody predicted too.
                 Outcome.Failure(AppError.MapTiles.Offline(cause = throwable))
             } finally {
                 connection?.disconnect()
@@ -111,14 +133,19 @@ class OsmTileSource @Inject constructor(
         }
     }
 
+    /** OpenStreetMap's standard tile URL layout. */
     private fun urlFor(tile: TileCoordinate): String =
         "https://tile.openstreetmap.org/${tile.zoom}/${tile.x}/${tile.y}.png"
 
     private companion object {
+        /** About nine screenfuls of tiles. See the note on `cache`. */
         const val CACHE_ENTRIES = 128
+
         const val CONNECT_TIMEOUT_MILLIS = 8_000
         const val READ_TIMEOUT_MILLIS = 8_000
         const val HTTP_NOT_FOUND = 404
+
+        /** Required by OSM's tile usage policy. See the class docs. */
         const val USER_AGENT = "AnchoragePerimeter/1.0 (attendance geofence; assessment build)"
     }
 }

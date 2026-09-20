@@ -9,12 +9,18 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Thin adapter from the domain port to the DataStore source.
+ * Connects the domain's [OfficeAnchorRepository] port to the DataStore that
+ * actually holds the office on disk.
  *
- * It is deliberately trivial. All the interesting behaviour - corruption
- * handling, partial-write tolerance - lives in the source, and all the rules
- * live in the use cases. A repository that grew logic of its own would become
- * a third place to look for the truth.
+ * ## Why it is deliberately this boring
+ *
+ * Every method is a one-line pass-through, and that is the intended design.
+ * All the interesting behaviour — corruption handling, partial-write
+ * tolerance — lives in [OfficeAnchorLocalSource], and all the *rules* live in
+ * the use cases. A repository that grew logic of its own would become a third
+ * place to look for the truth, and the three would drift.
+ *
+ * @param localSource The DataStore-backed store that does the real work.
  */
 @Singleton
 class OfficeAnchorRepositoryImpl @Inject constructor(

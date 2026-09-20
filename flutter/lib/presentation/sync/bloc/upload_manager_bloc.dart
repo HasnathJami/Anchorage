@@ -10,6 +10,34 @@ import 'package:bloc/bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 
+// ── THE UPLOAD MANAGER'S BLOC ────────────────────────────────────────────
+//
+// Events, state and the Bloc, in one file, because they are one contract.
+//
+// ITS REAL JOB IS DECIDING *WHEN* TO SWEEP. The sweep itself is
+// ProcessUploadQueue and contains all the rules; this class only decides when
+// to call it. Six things start a foreground sweep:
+//
+//   1. app launch
+//   2. the link became stable          (a TRANSITION, see below)
+//   3. new work was queued
+//   4. a backoff deadline elapsed
+//   5. a parked-work heartbeat          (backs off 20s -> 5min ceiling)
+//   6. the Upload Manager was opened
+//
+// (6) exists because (2) is a TRANSITION. A weak signal that reports itself
+// connected the whole time never produces one, so the row sat at
+// WAITING FOR CONNECTION on a phone showing four bars. Opening the screen is
+// a person saying "get on with it".
+//
+// (5) backs off because a captive portal reports a usable link and carries
+// nothing: the queue parks, and keeps parking. A flat interval would be three
+// full sweeps a minute, forever. It resets the moment anything syncs, the
+// link returns, or a person opens the screen.
+//
+// WorkManager still covers the app-closed case, but its latency is minutes -
+// which is why the foreground triggers exist at all.
+
 // ------------------------------------------------------------------- events
 
 sealed class UploadManagerEvent extends Equatable {

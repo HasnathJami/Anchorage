@@ -8,12 +8,26 @@ import com.anchorage.perimeter.domain.model.AttendanceRecord
 import com.anchorage.perimeter.domain.model.GeoPoint
 
 /**
- * Storage shape of an attendance proof.
+ * How an attendance record is shaped **in the database**.
  *
- * [localDate] is denormalised (stored as an ISO yyyy-MM-dd string) and given a
- * unique index. That index - not application code - is what actually makes the
- * once-per-day rule true: even if two coroutines raced past the use case check
- * simultaneously, SQLite would reject the second insert.
+ * ## Why this exists separately from [AttendanceRecord]
+ *
+ * They look almost identical, and that duplication is deliberate. The domain
+ * model is free to hold a [GeoPoint]; a SQLite row cannot — it needs two
+ * plain `REAL` columns. Keeping them apart means the storage format can
+ * change (a new column, a renamed field) without the domain model, and every
+ * rule built on it, having to change too.
+ *
+ * ## The unique index is the real once-per-day rule
+ *
+ * [localDate] is denormalised — the same instant is already in
+ * [markedAtEpochMillis] — and carries a **unique index**. That index, not
+ * application code, is what actually makes "one check-in per day" true. Even
+ * if two coroutines raced past the use case's check simultaneously, SQLite
+ * would reject the second insert.
+ *
+ * Application checks are for giving the user a good message. The database
+ * constraint is for correctness.
  */
 @Entity(
     tableName = "attendance_records",
@@ -24,9 +38,11 @@ data class AttendanceEntity(
     @ColumnInfo(name = "id")
     val id: String,
 
+    /** The exact instant, UTC. What the UI formats into a time. */
     @ColumnInfo(name = "marked_at_epoch_millis")
     val markedAtEpochMillis: Long,
 
+    /** ISO `yyyy-MM-dd` in the *user's* zone. Carries the unique index. */
     @ColumnInfo(name = "local_date")
     val localDate: String,
 
@@ -36,6 +52,7 @@ data class AttendanceEntity(
     @ColumnInfo(name = "longitude")
     val longitude: Double,
 
+    /** Frozen at check-in time — see [AttendanceRecord] for why. */
     @ColumnInfo(name = "distance_meters")
     val distanceMeters: Double,
 
@@ -46,7 +63,12 @@ data class AttendanceEntity(
     val anchorLabel: String,
 )
 
-/** Entity -> domain. Kept as extensions so neither layer imports the other's mapper. */
+/**
+ * Database row to domain model.
+ *
+ * Kept as an extension function rather than a method on either type, so
+ * neither layer has to import the other's mapper.
+ */
 fun AttendanceEntity.toDomain(): AttendanceRecord = AttendanceRecord(
     id = id,
     markedAtEpochMillis = markedAtEpochMillis,
@@ -56,7 +78,13 @@ fun AttendanceEntity.toDomain(): AttendanceRecord = AttendanceRecord(
     anchorLabel = anchorLabel,
 )
 
-/** Domain -> entity. [localDate] is supplied by the repository, which owns the clock. */
+/**
+ * Domain model to database row.
+ *
+ * @param localDate Supplied by the repository, which is the layer that owns
+ *   the clock and therefore knows which local day this instant falls on. The
+ *   entity cannot work it out for itself without a time zone.
+ */
 fun AttendanceRecord.toEntity(localDate: String): AttendanceEntity = AttendanceEntity(
     id = id,
     markedAtEpochMillis = markedAtEpochMillis,

@@ -45,11 +45,20 @@ import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /**
- * The audit trail.
+ * **The audit trail** — every past check-in, newest first.
  *
- * Not required by the brief, but a geofenced check-in that leaves no reviewable
- * record is only half a feature: the point of freezing distance and accuracy
- * into every [AttendanceRecord] is that somebody can later look at them.
+ * Not required by the brief, but a geofenced check-in that leaves no
+ * reviewable record is only half a feature. The whole point of freezing the
+ * distance and accuracy into every
+ * [com.anchorage.perimeter.domain.model.AttendanceRecord] is that somebody
+ * can later look at them.
+ *
+ * Read-only: no intents, no effects, just a list. See
+ * [com.anchorage.perimeter.presentation.history.AttendanceHistoryViewModel].
+ *
+ * @param onBack Pop back to Attendance.
+ * @param modifier Standard Compose modifier.
+ * @param viewModel Supplied by Hilt; overridable in tests.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

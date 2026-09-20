@@ -2,6 +2,23 @@ import 'package:anchorage_harbor/core/result/result.dart';
 import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 
+// ── THE SYNC ENGINE'S PORTS ──────────────────────────────────────────────
+//
+// The three things the sync engine needs from the outside world.
+//
+// A "port" is an interface the DOMAIN declares and the DATA layer
+// implements. The arrow points inward: the domain states what it needs, and
+// the adapter bends itself to fit.
+//
+//   domain/services/sync_ports.dart       data/...
+//   ─────────────────────────────────     ────────────────────────────────
+//   UploaderPort                     ←    MockUploadApi / HttpUploadApi
+//   ConnectivityPort                 ←    ConnectivityMonitor
+//   BackgroundSchedulerPort          ←    WorkManagerScheduler
+//
+// This is what lets every rule in ProcessUploadQueue be tested on the plain
+// Dart VM - no server, no network, no Android - by handing it three fakes.
+
 /// One progress tick from an in-flight upload.
 class UploadProgress {
   const UploadProgress({

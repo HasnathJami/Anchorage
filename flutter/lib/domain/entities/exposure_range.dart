@@ -1,5 +1,14 @@
 import 'package:equatable/equatable.dart';
 
+// ── EXPOSURE ─────────────────────────────────────────────────────────────
+//
+// The EV compensation slider's range, and the step grid it must snap to.
+//
+// Android REJECTS or silently rounds an off-grid EV value, and a finger drag
+// produces one on nearly every frame. So every value is snapped here, before
+// anything else reads it - which is why the slider feels solid rather than
+// occasionally ignoring you.
+
 /// The exposure compensation a sensor will accept, and the arithmetic the
 /// brightness slider needs.
 ///

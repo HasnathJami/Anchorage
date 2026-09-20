@@ -2,6 +2,18 @@ import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 import 'package:flutter/foundation.dart';
 import 'package:workmanager/workmanager.dart';
 
+// ── BACKGROUND SCHEDULING ────────────────────────────────────────────────
+//
+// Asks Android to run a sweep even when the app is closed.
+//
+// This is the half of the resilience story the app cannot do itself: a
+// process that has been killed cannot watch for a network. WorkManager can,
+// and it wakes the app when one appears.
+//
+// Note the pairing. The FOREGROUND triggers (in UploadManagerBloc) are fast
+// but only exist while the app runs; WorkManager survives anything but has
+// minutes of latency. Neither alone is enough.
+
 /// Task identifiers. Constants, because a typo in a string passed to the OS
 /// produces a job that silently never runs.
 abstract final class SyncTasks {

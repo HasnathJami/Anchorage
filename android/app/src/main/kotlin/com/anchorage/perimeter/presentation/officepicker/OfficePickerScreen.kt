@@ -68,13 +68,30 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * "Set Office Location" as a map, rather than as a single blind GPS grab.
+ * **The office picker** — "Set Office Location" as a map, rather than as a
+ * single blind GPS grab.
  *
- * The screen exists because capturing the raw fix has one failure mode the
- * user cannot see or correct: if the phone is 30 m out, the office is 30 m out
- * *forever*, and every future check-in inherits the error. Here the fix is a
- * starting suggestion and the user gets the final say - they can see the
- * building, drag the perimeter over it, and confirm.
+ * ## Why this screen exists
+ *
+ * Capturing the raw fix has one failure mode the user cannot see or correct:
+ * if the phone is 30 m out, the office is 30 m out **forever**, and every
+ * future check-in inherits that error.
+ *
+ * Here the fix is only a starting suggestion and the user gets the final
+ * say — they can see the building, drag the perimeter over it, and confirm.
+ *
+ * ## Same two-part split as the attendance screen
+ *
+ * [OfficePickerRoute] owns the ViewModel, permissions and effects.
+ * [OfficePickerContent] below is pure data-in, callbacks-out, so it previews
+ * and can be driven by an instrumentation test with no Hilt, no GPS and no
+ * network.
+ *
+ * @param onBack Leave without saving.
+ * @param onSaved Called after the anchor is written. Pops back to Attendance;
+ *   no result is passed, because Attendance observes the repository directly.
+ * @param modifier Standard Compose modifier.
+ * @param viewModel Supplied by Hilt; overridable in tests.
  */
 @Composable
 fun OfficePickerRoute(
@@ -154,8 +171,14 @@ fun OfficePickerRoute(
 }
 
 /**
- * The stateless body: data in, callbacks out, so it previews and can be driven
- * by an instrumentation test without Hilt, GPS or a network.
+ * The stateless body: data in, callbacks out.
+ *
+ * @param state Everything the map should show.
+ * @param attribution The imagery credit the OSM licence requires on screen.
+ * @param onIntent Where every gesture and tap goes.
+ * @param onBack Leave without saving.
+ * @param snackbarHostState Host for one-shot messages.
+ * @param modifier Standard Compose modifier.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable

@@ -1215,6 +1215,8 @@ it is a two-line edit to `AttendanceWindow`.
 
 | Document | What is in it |
 | --- | --- |
+| **[ANCHORAGE_PERIMETER.md](ANCHORAGE_PERIMETER.md)** | **Start here for the Android app.** A guided tour: read it once and you can explain the whole thing |
+| **[ANCHORAGE_HARBOR.md](ANCHORAGE_HARBOR.md)** | **Start here for the Flutter app.** The same tour, for the camera and the sync engine |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering, module graph, dependency rules, DI strategy, and the decisions behind them |
 | [docs/feature-geofenced-attendance.md](docs/feature-geofenced-attendance.md) | The geofence: maths, policy, hysteresis, the attendance window, the full state table |
 | [docs/feature-camera-capture.md](docs/feature-camera-capture.md) | Camera lifecycle, zoom model, focus, lens discovery, batching |

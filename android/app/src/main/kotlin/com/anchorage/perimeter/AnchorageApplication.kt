@@ -4,12 +4,19 @@ import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
 
 /**
- * Application entry point and the root of the Hilt object graph.
+ * The application entry point, and the root of the Hilt object graph.
  *
- * It is intentionally empty beyond the annotation: work done in
- * `Application.onCreate` runs on the critical path of every cold start, and
- * everything Anchorage needs (DataStore, Room, the fused client) is created
- * lazily by Hilt the first time it is actually injected.
+ * `@HiltAndroidApp` is what generates the dependency-injection container for
+ * the whole app. Every `@AndroidEntryPoint` (there is one: [MainActivity])
+ * and every `@HiltViewModel` gets its dependencies from here.
+ *
+ * ## Why it is empty
+ *
+ * Deliberately. Anything done in `Application.onCreate` runs on the critical
+ * path of **every** cold start, so it directly costs launch time. Everything
+ * Anchorage needs — DataStore, Room, the fused location client — is created
+ * lazily by Hilt the first time it is actually injected, which for most
+ * launches is after the first frame is already on screen.
  */
 @HiltAndroidApp
 class AnchorageApplication : Application()

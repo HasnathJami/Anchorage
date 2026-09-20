@@ -1,16 +1,43 @@
 import 'package:equatable/equatable.dart';
 
-/// The complete, closed taxonomy of failures Anchorage Harbor can experience.
+/// Every way Anchorage Harbor can fail, listed in one place.
 ///
-/// Two properties make this worth its weight:
+/// This is the companion to [Result]: a `Result.failure` always carries one
+/// of these. Read this file and you know the complete set of things that can
+/// go wrong in the app.
 ///
-///  1. **Every case is actionable.** Each one maps to a *different* thing the
-///     app or the user should do next - retry now, wait for a network, ask for
-///     a permission, or give up and tell someone. A single `AppException` with
-///     a message string could not drive any of that.
-///  2. **It is exhaustive.** `switch` expressions over these types are checked
-///     by the analyser, so a new failure mode cannot slip through the sync
-///     engine silently defaulting to "retry forever".
+/// ## Two properties make this worth its weight
+///
+/// **1. Every case is actionable.** Each one maps to a *different* thing the
+/// app or the user should do next — retry now, wait for a network, ask for a
+/// permission, or give up and tell someone. A single `AppException` with a
+/// message string could not drive any of that.
+///
+/// **2. It is exhaustive.** `switch` expressions over a sealed type are
+/// checked by the analyser, so a new failure mode cannot slip through the
+/// sync engine silently defaulting to "retry forever".
+///
+/// ## The rule for adding a case
+///
+/// **Every error case must map to a different remedy.** If two cases would
+/// show the same message and the same button, they should be one case.
+///
+/// [NoConnectionFailure] and [LowBandwidthFailure] are separate because one
+/// waits for *any* link and the other for a *better* one.
+/// [FlashUnavailableFailure] is separate from [CameraOperationFailure]
+/// because retrying will never grow an LED onto a sensor that shipped
+/// without one.
+///
+/// ## Where the sync engine reads this
+///
+/// Two extension getters at the bottom of this file do almost all the work:
+///
+/// - [FailureRetryability.isRetryable] — "could another attempt plausibly
+///   succeed?" This is what stops the queue hammering a permanently broken
+///   task forever.
+/// - [FailureRetryability.isConnectivityRelated] — "is the *link* the only
+///   thing missing?" This is what parks a task without spending one of its
+///   three attempts.
 sealed class Failure extends Equatable {
   const Failure({this.cause});
 

@@ -3,6 +3,15 @@ import 'dart:async';
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:flutter/material.dart';
 
+// ── MOMENTARY MESSAGES ───────────────────────────────────────────────────
+//
+// A toast that appears at the TOP of the screen. 2.5s for a confirmation,
+// 4s for a failure.
+//
+// WHY NOT SnackBar: it only anchors to the bottom, and on the camera screen
+// the bottom edge is the SHUTTER. The confirmation of a shot covered the very
+// button the user was about to press again.
+
 /// What one of these carries on its right-hand side, if anything.
 ///
 /// A record rather than `SnackBarAction`: that class is welded to the snackbar

@@ -1,6 +1,13 @@
 import 'package:anchorage_harbor/domain/services/permission_gateway.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
+// ── PERMISSIONS ──────────────────────────────────────────────────────────
+//
+// PermissionGateway over the `permission_handler` plugin.
+//
+// Pinned to permission_handler 12.0.3 on purpose: 13.x requires AGP 9 and
+// compileSdk 37, which breaks this project's Android build. See CLAUDE.md.
+
 /// [PermissionGateway] backed by the `permission_handler` plugin.
 ///
 /// This is the only file in the app that imports `permission_handler`, which

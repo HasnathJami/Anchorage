@@ -3,6 +3,19 @@ import 'package:anchorage_harbor/data/datasources/mock_upload_api.dart';
 import 'package:anchorage_harbor/di/injector.dart';
 import 'package:flutter/material.dart';
 
+// ── THE SETTINGS SHEET ───────────────────────────────────────────────────
+//
+// The camera's options: the grid overlay, and the mock-response switcher.
+//
+// FLASH IS DELIBERATELY NOT HERE. The sheet used to list all four modes while
+// the top bar already cycled them - one setting, two controls, two places to
+// forget. The top-bar button steps the whole of FlashPolicy.cycle, so nothing
+// became unreachable. Do not put it back.
+//
+// The mock-response switcher offers exactly TWO outcomes, SUCCESS and FAILED,
+// because a server has two answers. See MockUploadApi for why LOW BANDWIDTH
+// and NO INTERNET were removed from it.
+
 /// What the gear in the top bar opens.
 ///
 /// The reference design puts a settings icon on the camera and shows nothing

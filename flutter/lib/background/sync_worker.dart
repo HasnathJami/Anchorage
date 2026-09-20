@@ -5,6 +5,19 @@ import 'package:anchorage_harbor/domain/usecases/process_upload_queue.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
+// ── THE BACKGROUND ISOLATE ───────────────────────────────────────────────
+//
+// What WorkManager runs when the app is closed.
+//
+// THE THING TO UNDERSTAND: this runs in a SEPARATE DART ISOLATE with its own
+// object graph. It cannot see anything the foreground app has in memory -
+// which is exactly why the queue's claim/lease mechanism exists. The two
+// sides coordinate through SQLite and nothing else.
+//
+// BACKGROUND SCHEDULING IS DISABLED INSIDE THE ISOLATE. Scheduling
+// WorkManager work from inside a WorkManager task builds an accidental
+// wake-up loop.
+
 /// The background half of the sync engine.
 ///
 /// This function runs in a **separate isolate** that WorkManager spawns after

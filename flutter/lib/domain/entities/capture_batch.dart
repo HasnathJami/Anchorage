@@ -1,5 +1,14 @@
 import 'package:equatable/equatable.dart';
 
+// ── CAPTURE BATCH ────────────────────────────────────────────────────────
+//
+// One shutter session: the shots taken since the camera screen opened, or
+// since the last submit.
+//
+// A batch is HANDED OVER, never shared. On submit the shots are enqueued and
+// a FRESH batch is started, so the sync engine and the camera can never end
+// up mutating the same list.
+
 /// One photograph, already written to the app's private storage.
 ///
 /// The file is on disk before this object exists. That ordering is the whole

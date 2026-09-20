@@ -8,6 +8,24 @@ import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 
+// ── THE MOCK SERVER ──────────────────────────────────────────────────────
+//
+// Stands in for a real upload endpoint, so every retry, backoff and
+// connectivity rule in this codebase can be exercised without a server
+// existing.
+//
+// IT SCRIPTS EXACTLY TWO OUTCOMES: SUCCESS and FAILED. A server has two
+// answers - it took the file or it did not.
+//
+// `LOW BANDWIDTH` and `NO INTERNET` used to be switchable here and were
+// REMOVED, because they are conditions of the LINK, not answers from a
+// server, and a scripted copy of them proved nothing. Both are now real:
+// pull the device off the network and the queue parks; throttle it and the
+// measured-throughput watchdog in ProcessUploadQueue parks it.
+//
+// FAILED is a retryable 500, so RetryPolicy stays the only thing that decides
+// when to stop trying.
+
 /// What the mock **server** should do on the next attempt.
 ///
 /// Two outcomes, and only two, because a server has only two things to say

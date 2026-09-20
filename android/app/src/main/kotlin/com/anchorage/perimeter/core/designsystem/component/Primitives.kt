@@ -38,6 +38,22 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
 
+/*
+ * ── SHARED BUILDING BLOCKS ───────────────────────────────────────────────
+ *
+ * The small pieces every Anchorage screen is assembled from: the white card
+ * surface, the uppercase section eyebrow, the status pill, the primary and
+ * secondary buttons.
+ *
+ * They live here rather than beside the screen that first needed them so
+ * that a second screen reuses the component instead of copying its padding
+ * and rounding - which is how two screens drift apart.
+ *
+ * A note on button heights: every one uses `heightIn(min = ...)`, never a
+ * fixed `height`. At a large system text scale a fixed box crops its own
+ * label, which is the one failure a button cannot afford.
+ */
+
 /**
  * The white rounded surface every section of the Attendance screen sits on.
  *

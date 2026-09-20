@@ -32,11 +32,27 @@ import androidx.compose.animation.animateContentSize
 import com.anchorage.perimeter.domain.model.AnchorSource
 
 /**
- * "STEP 1: OFFICE CONTEXT" - the card that captures and displays the anchor.
+ * **"STEP 1: OFFICE CONTEXT"** — the card that captures and displays the
+ * saved office anchor.
  *
- * The status dot in the eyebrow is the card's whole state indicator: blue once
- * an office is anchored, grey while it is not. It mirrors the reference design
- * and gives the section a glanceable answer to "is step 1 done?".
+ * Shows one of two states: an invitation to set an office, or the saved one
+ * with its coordinates, accuracy and a small procedurally-drawn map preview.
+ *
+ * The status dot in the eyebrow is the card's whole state indicator: blue
+ * once an office is anchored, grey while it is not. It mirrors the reference
+ * design and gives the section a glanceable answer to "is step 1 done?".
+ *
+ * ## One `animateContentSize` on the card, not on each child
+ *
+ * Anchoring an office adds a row, and swapping the button for a spinner
+ * changes the height again. Animating each child made the card lurch; one
+ * modifier on the card covers every size change it can make.
+ *
+ * @param state Supplies the anchor, if any, and the capturing spinner flag.
+ * @param onUseCurrentLocation "Use my current location" — capture a GPS fix.
+ * @param onPickOnMap "Choose on map" — open the picker.
+ * @param onClearOffice Forget the saved office.
+ * @param modifier Standard Compose modifier.
  */
 @Composable
 fun OfficeContextCard(

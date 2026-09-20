@@ -7,11 +7,17 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Presentation-only formatting.
+ * Turns numbers into the text the user reads: "120m", "±6 m", "09:12 AM".
  *
- * Kept out of the ViewModel so that state stays numeric and locale-free (and
- * therefore testable without a Context), and out of the composables so the
- * rules are asserted once by unit tests rather than eyeballed in previews.
+ * ## Why formatting lives here and nowhere else
+ *
+ * - **Not in the ViewModel**, so its state stays numeric and locale-free —
+ *   which is what lets the ViewModel tests run without an Android `Context`.
+ * - **Not in the composables**, so the rules are asserted once by unit tests
+ *   rather than eyeballed in a preview.
+ *
+ * Every function takes an explicit `locale` (and `zone` where relevant) with
+ * a sensible default, so a test can pin them and assert exact strings.
  */
 internal object AttendanceFormatters {
 

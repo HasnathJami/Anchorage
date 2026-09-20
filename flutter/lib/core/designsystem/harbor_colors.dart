@@ -1,5 +1,14 @@
 import 'package:flutter/material.dart';
 
+// ── COLOUR ───────────────────────────────────────────────────────────────
+//
+// The Harbor palette, exposed as a Flutter ThemeExtension so screens reach
+// it with `context.harborColors.danger` rather than a literal.
+//
+// The values were SAMPLED FROM THE REFERENCE SCREENSHOTS in design/, which is
+// why they are odd numbers (#235FEB, not a round #2563EB). If you want to
+// change one, change the token - never the widget.
+
 /// The Harbor palette.
 ///
 /// Sampled from the reference design supplied with the brief rather than

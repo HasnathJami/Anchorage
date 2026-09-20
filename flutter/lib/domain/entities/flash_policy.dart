@@ -1,6 +1,20 @@
 import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:equatable/equatable.dart';
 
+// ── FLASH ────────────────────────────────────────────────────────────────
+//
+// The order the flash button cycles through, and the rules around it.
+//
+// ONE SETTING, ONE CONTROL. The settings sheet used to list all four modes
+// while the top bar already cycled them - two controls for one setting, and
+// two places to forget. The sheet's copy was removed; the top-bar button
+// steps the whole of `cycle`, so nothing became unreachable.
+//
+// The chosen mode lives on CameraState, not on the controller. A controller
+// is thrown away on every lens switch and every pause, and a fresh one starts
+// at the plugin's default - so the user's choice has to outlive it and be
+// re-applied.
+
 /// Every rule about the flash, in one place.
 ///
 /// These rules used to be a `const List` declared inside the Bloc's toggle

@@ -9,19 +9,46 @@ import com.anchorage.perimeter.presentation.attendance.AttendanceRoute
 import com.anchorage.perimeter.presentation.history.AttendanceHistoryRoute
 import com.anchorage.perimeter.presentation.officepicker.OfficePickerRoute
 
-/** Type-safe-ish route keys; string constants kept in one place. */
+/**
+ * The three screens' addresses, as string constants in one place.
+ *
+ * Compose Navigation matches routes by string, so a typo would be a runtime
+ * crash rather than a compile error. Naming them here means the typo can only
+ * be made once.
+ */
 object AnchorageDestinations {
+    /** The main screen: the dial and the check-in button. */
     const val ATTENDANCE = "attendance"
+
+    /** The log of past check-ins. */
     const val HISTORY = "attendance/history"
+
+    /** The map for placing the office by hand. */
     const val OFFICE_PICKER = "attendance/office"
 }
 
 /**
- * The whole navigation graph.
+ * **The whole navigation graph** — all three screens of the app.
+ *
+ * ```
+ *              ┌──────────────┐
+ *              │  Attendance  │  ← start destination
+ *              └──┬────────┬──┘
+ *        history  │        │  set office
+ *                 ▼        ▼
+ *          ┌─────────┐  ┌──────────────┐
+ *          │ History │  │ OfficePicker │
+ *          └─────────┘  └──────────────┘
+ * ```
  *
  * Attendance is the start destination rather than a dashboard: the brief asks
  * for setup and check-in to live on one screen, so the app opens directly on
  * the thing the user came to do.
+ *
+ * @param onExitApp Called when the user confirms leaving. Wired to
+ *   `finishAffinity` in [com.anchorage.perimeter.MainActivity].
+ * @param navController The navigation controller. Defaulted so previews and
+ *   tests can supply their own.
  */
 @Composable
 fun AnchorageNavHost(

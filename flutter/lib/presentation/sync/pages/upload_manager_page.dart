@@ -6,6 +6,23 @@ import 'package:anchorage_harbor/presentation/sync/widgets/upload_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+// ── THE UPLOAD MANAGER SCREEN ────────────────────────────────────────────
+//
+// The queue: a header showing "4 of 12 uploaded", then one row per file.
+//
+// TWO THINGS THAT LOOK ODD AND ARE DELIBERATE:
+//
+// 1. NO BACK ARROW. The system back gesture and the bottom call to action
+//    (START NEW UPLOAD BATCH) are the two ways out. An arrow would be a third
+//    answer to one question, and the bottom button is the route the user
+//    actually wants - back to the camera.
+//
+// 2. initState RAISES UploadManagerOpened. The Bloc is hoisted above the
+//    navigator, so UploadManagerStarted fires once for the whole app - but
+//    the SCREEN opens many times over that lifetime, and each visit is a
+//    person saying "get on with it". Without this, a row sat at
+//    REJECTED BY SERVER long after the cause was fixed.
+
 /// The Upload Manager.
 ///
 /// A transcription of the reference design: title row with the link chip, the

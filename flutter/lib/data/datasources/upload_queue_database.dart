@@ -2,6 +2,16 @@ import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+// ── THE DATABASE ─────────────────────────────────────────────────────────
+//
+// Opens and migrates the one SQLite table the app uses.
+//
+// WHY SQLITE, NOT A JSON FILE OR SharedPreferences: atomic, durable,
+// single-row updates. A progress tick fires several times a second;
+// rewriting a whole JSON document that often would be slow, and - if the
+// process died mid-write - a way to lose the ENTIRE queue. A row update
+// either happens or it does not.
+
 /// Column names, in one place, so a typo is a compile error rather than a
 /// silent empty result set.
 abstract final class UploadQueueColumns {

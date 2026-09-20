@@ -20,6 +20,27 @@ import 'package:uuid/uuid.dart';
 export 'package:anchorage_harbor/presentation/capture/bloc/camera_event.dart';
 export 'package:anchorage_harbor/presentation/capture/bloc/camera_state.dart';
 
+// ── HOW TO READ THIS FILE ────────────────────────────────────────────────
+//
+// It is long because a camera screen genuinely has this many controls. It is
+// organised into five sections, each with its own banner:
+//
+//   LIFECYCLE            open, permission, pause, resume
+//   LENS AND ZOOM        the intricate part - read the section banner first
+//   FLASH                one setting, one control
+//   FOCUS AND EXPOSURE   tap-to-focus, the padlock, the EV slider
+//   CAPTURE              shutter, discard, submit the batch
+//
+// The constructor at the top registers every event with its CONCURRENCY
+// TRANSFORMER, and those choices are not decoration:
+//
+//   droppable    shutter, submit   one press = one photo, never a queue
+//   restartable  zoom, EV drag     only the newest value matters
+//   sequential   everything else   order matters, do not interleave
+//
+// Getting those wrong is the difference between a camera that feels solid
+// and one that duplicates frames.
+
 /// The camera screen's state machine.
 ///
 /// Three things are worth reading closely.
@@ -152,6 +173,13 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
   /// the padlock.
   Timer? _reticleDeadline;
 
+  // ═══════════════════════════════════════════════════ LIFECYCLE
+  //
+  // Opening the camera, asking for permission, and the pause/resume
+  // dance. Android hands the sensor to whichever app asked most recently,
+  // so holding it while backgrounded leaves the user with a dead preview
+  // when they return from a phone call.
+
   Future<void> _onStarted(CameraStarted event, Emitter<CameraState> emit) async {
     emit(
       state.copyWith(
@@ -265,6 +293,17 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
     await _openCamera(emit);
   }
+
+  // ═══════════════════════════════════════════════════ LENS AND ZOOM
+  //
+  // The most intricate part of this file. A pinch emits dozens of values a
+  // second, and some of those values can only be reached by opening a
+  // DIFFERENT physical camera - which blanks the preview for a few hundred
+  // milliseconds.
+  //
+  // So a zoom that needs another camera is DEFERRED to the end of the
+  // gesture and dispatched as its own `sequential` event. Acting on every
+  // crossing of 1.0x reopened the camera over and over.
 
   Future<void> _onLensSelected(
     CameraLensSelected event,
@@ -492,6 +531,13 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     if (failure != null) emit(_failureState(failure));
   }
 
+  // ═══════════════════════════════════════════════════ FLASH
+  //
+  // The chosen mode lives on the STATE, not on the controller, because a
+  // controller is thrown away on every lens switch and every pause and a
+  // fresh one starts at the plugin default. FlashPolicy owns the rules;
+  // this section only obeys them.
+
   Future<void> _onFlashToggled(
     CameraFlashToggled event,
     Emitter<CameraState> emit,
@@ -587,6 +633,16 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _torchDeadline = null;
     _torchArmedAt = null;
   }
+
+  // ═══════════════════════════════════════════════════ FOCUS AND EXPOSURE
+  //
+  // Tap-to-focus, the metering padlock, and the EV slider.
+  //
+  // Focus and exposure lock TOGETHER, behind one padlock, because every
+  // camera app presents it that way - the situation is one situation.
+  // A lens switch clears the reticle, the padlock and the EV offset, for
+  // the same reason a pause does: the new controller is not locked, and
+  // drawing a closed padlock over it would tell the user something untrue.
 
   Future<void> _onFocusRequested(
     CameraFocusRequested event,
@@ -744,6 +800,12 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _reticleDeadline?.cancel();
     _reticleDeadline = null;
   }
+
+  // ═══════════════════════════════════════════════════ CAPTURE
+  //
+  // The shutter, discarding a shot, and handing the batch to the sync
+  // engine. Shutter presses are `droppable`: hammering the button must
+  // produce one photograph per completed capture, not a queue of twelve.
 
   Future<void> _onShutterPressed(
     CameraShutterPressed event,

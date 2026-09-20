@@ -31,22 +31,42 @@ import javax.inject.Inject
 /**
  * The office picker's state holder.
  *
- * Same discipline as [com.anchorage.perimeter.presentation.attendance.AttendanceViewModel]:
- * it translates intents into use-case calls and projects the result. It makes
- * no geofence judgement at all - this screen records a coordinate, and whether
- * the user is standing inside it is a question for check-in.
+ * Same discipline as
+ * [com.anchorage.perimeter.presentation.attendance.AttendanceViewModel]: it
+ * translates intents into use-case calls and projects the result.
  *
- * Two things here are worth reading closely.
+ * It makes **no geofence judgement at all**. This screen records a
+ * coordinate; whether the user is standing inside it is a question for
+ * check-in, asked later against the saved anchor.
+ *
+ * ## What the screen has to juggle
+ *
+ * ```
+ *  ┌ the saved anchor ──── centre the map on it, if one exists
+ *  ├ the user's GPS ────── the blue dot, and "find me"
+ *  ├ map tiles ─────────── fetched per viewport, cached, degradable
+ *  └ the marker ────────── always dead centre; the map moves under it
+ * ```
+ *
+ * ## Two things worth reading closely
  *
  * **Tile failures are not screen failures.** A tile that will not load sets
  * [OfficePickerUiState.isMapImageryDegraded] and nothing else. The pin, the
- * coordinates and the confirm button all keep working with a plain grid behind
- * them, because a picker that refuses to open without a network is useless in
- * exactly the basements and car parks where people need to set an office.
+ * coordinates and the confirm button all keep working with a plain grid
+ * behind them — because a picker that refuses to open without a network is
+ * useless in exactly the basements and car parks where people need to set an
+ * office.
  *
  * **Only one location request is ever in flight.** "Find me" is idempotent
- * while it is running; a user jabbing the button cannot stack fifteen
+ * while it is running, so a user jabbing the button cannot stack fifteen
  * high-accuracy GPS requests, each holding the radio awake.
+ *
+ * @param locationTracker The GPS, for the blue dot and for "find me".
+ * @param officeAnchorRepository Read at startup, to centre on an existing
+ *   office.
+ * @param placeOfficeAnchor Writes the confirmed coordinate.
+ * @param tileSource Downloads the map imagery, and supplies the attribution
+ *   text the licence requires the screen to display.
  */
 @HiltViewModel
 class OfficePickerViewModel @Inject constructor(

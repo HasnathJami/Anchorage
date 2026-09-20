@@ -5,6 +5,22 @@ import 'package:flutter/services.dart';
 // Colours travel with the theme: one import gives a widget tokens and types.
 export 'package:anchorage_harbor/core/designsystem/harbor_colors.dart';
 
+// ── THEME ────────────────────────────────────────────────────────────────
+//
+// Wires the colour and type tokens into the Flutter theme, plus the spacing
+// and radius ladders.
+//
+// Screens never write a raw colour, size or radius at a call site. They use:
+//
+//   context.harborColors.danger     not  Color(0xFFE5484D)
+//   context.harborText.eyebrow      not  TextStyle(fontSize: 11, ...)
+//   HarborSpacing.md                not  16.0
+//   HarborRadius.card               not  BorderRadius.circular(20)
+//
+// Accessibility rules that are already met and must stay met: no state
+// carried by colour alone, and numeric read-outs use tabular figures so a
+// changing number does not make the row jitter.
+
 /// The Harbor type scale.
 ///
 /// Named for role rather than by a generic rung, and deliberately short: the

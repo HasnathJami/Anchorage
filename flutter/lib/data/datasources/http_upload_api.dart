@@ -1,3 +1,13 @@
+
+// ── REAL HTTP UPLOAD ─────────────────────────────────────────────────────
+//
+// The production transport, for when there is a real endpoint to talk to.
+//
+// Not wired up in this assessment build - the injector supplies MockUploadApi
+// instead - but it implements the same UploaderPort, which is the whole
+// point: swapping them is a one-line change in di/injector.dart, and not one
+// line of the sync engine or its tests moves.
+
 // ---------------------------------------------------------------------------
 //  Anchorage Harbor - real upload transport (INTENTIONALLY COMMENTED OUT)
 // ---------------------------------------------------------------------------

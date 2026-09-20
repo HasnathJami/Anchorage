@@ -5,6 +5,22 @@ import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/domain/repositories/upload_queue_repository.dart';
 import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 
+// ── SYNC USE CASES ───────────────────────────────────────────────────────
+//
+// The verbs the upload screens can perform, one class each:
+//
+//   EnqueueBatch        a finished capture session enters the queue
+//   WatchUploadQueue    the live list plus its aggregate header
+//   PauseAllUploads     hold everything
+//   ResumeAllUploads    release everything, and re-arm what gave up
+//   RetryFailedUploads  re-arm what gave up (fired by opening the screen)
+//   RetryUpload         re-arm one row
+//   DiscardUpload       drop one row
+//   ClearSyncedUploads  housekeeping
+//
+// None of them contains a rule about WHEN to upload - that is all in
+// ProcessUploadQueue. These are the things a PERSON asks for.
+
 /// Moves a finished capture batch into the durable queue.
 ///
 /// The order matters: the rows are committed to SQLite *before* the OS is

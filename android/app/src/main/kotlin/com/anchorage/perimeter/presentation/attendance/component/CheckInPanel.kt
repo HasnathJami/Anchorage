@@ -30,16 +30,27 @@ import com.anchorage.perimeter.presentation.attendance.AttendanceUiState
 import com.anchorage.perimeter.R
 
 /**
- * The dashed panel at the foot of the screen.
+ * **The dashed panel at the foot of the screen** — the padlock, the check-in
+ * button, and the caption stating the permitted hours.
  *
- * The padlock is the emotional core of the design: closed while any gate is
- * shut, open the moment every gate clears. It is animated with a [Crossfade]
- * so the transition registers as a state *change* rather than a repaint - the
- * user is being told something just became possible.
+ * ## The padlock is the emotional core of the design
  *
- * The caption underneath always states the window, even when the window is the
- * reason the button is disabled, because "why can I not press this?" must be
- * answerable without leaving the screen.
+ * Closed while any gate is shut, open the moment every gate clears. It is
+ * animated with a [Crossfade] so the transition registers as a state *change*
+ * rather than a repaint — the user is being told that something just became
+ * possible.
+ *
+ * ## The caption always states the window
+ *
+ * Even when the window is itself the reason the button is disabled. "Why can
+ * I not press this?" must be answerable without leaving the screen.
+ *
+ * @param state Supplies `canMarkAttendance`, the busy flag, whether today is
+ *   already marked, and the window label for the caption.
+ * @param onMarkAttendance Called when the button is tapped. The ViewModel
+ *   re-validates everything regardless, because a disabled button is an
+ *   affordance, not an enforcement boundary.
+ * @param modifier Standard Compose modifier.
  */
 @Composable
 fun CheckInPanel(

@@ -28,6 +28,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
 
+/*
+ * ── THE PROBLEM BANNER ───────────────────────────────────────────────────
+ *
+ * Deliberately a banner rather than a Snackbar or a Toast.
+ *
+ * The conditions it reports - permission missing, location switched off,
+ * signal too weak - are *persistent states*, not momentary events. A
+ * transient toast would vanish before the user could act on it and leave
+ * the screen looking inexplicably inert.
+ *
+ * Every banner carries an action, because a message that names a problem
+ * without offering the fix is only half an answer. See `AttendanceNotice`
+ * for the rule about which conditions earn one at all.
+ */
+
 /**
  * The inline problem banner.
  *

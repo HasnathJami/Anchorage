@@ -1,6 +1,14 @@
 import 'package:anchorage_harbor/core/error/failure.dart';
 import 'package:anchorage_harbor/core/result/result.dart';
 
+// ── PERMISSION GATEWAY ───────────────────────────────────────────────────
+//
+// Asking for the camera permission, behind an interface.
+//
+// Three outcomes, not two, and the third is the one that matters: "denied"
+// can be asked again, "permanently denied" cannot and only Settings can fix
+// it. An app that offers the same button for both is a dead end.
+
 /// The three states that actually matter when asking for a permission.
 ///
 /// `permission_handler` reports six; collapsing them here means the UI has

@@ -1,5 +1,14 @@
 import 'package:equatable/equatable.dart';
 
+// ── CAMERA LENS ──────────────────────────────────────────────────────────
+//
+// The domain's description of one camera on the device: which way it faces,
+// what it can zoom to, and how its sensor is oriented.
+//
+// Note what is NOT here: anything from the `camera` plugin. The adapter
+// translates, so every rule about lenses and zoom is testable with no
+// hardware present.
+
 /// One physical back camera, described in the terms the UI needs.
 ///
 /// The reference design shows "0.5 / 1 / 2" pills. Those numbers are *not*

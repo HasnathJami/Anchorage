@@ -14,6 +14,23 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+// ── THE CAMERA ADAPTER ───────────────────────────────────────────────────
+//
+// Implements CameraPort over the `camera` plugin. Everything the rest of the
+// app knows about cameras comes through here.
+//
+// THE CONTRACT: THIS CLASS NEVER THROWS. Note that _open catches EVERYTHING,
+// not just CameraException - vendor camera code returns PlatformException and
+// bare StateError too. `initialise` already caught broadly; a lens switch did
+// not, so it could throw straight through the port.
+//
+// CAPABILITIES ARE DISCOVERED BY ATTEMPTING THEM. The plugin cannot be ASKED
+// whether this phone has a flash, a front camera, or a controllable metering
+// point. So each is tried and the refusal translated into a typed failure -
+// which is what lets the UI simply NOT DRAW a control the hardware ignores.
+// A button that does nothing when pressed is worse than no button, because
+// the user cannot tell a broken app from a limited device.
+
 /// [CameraPort] backed by the `camera` plugin.
 ///
 /// This class is the app's entire blast radius for camera failures. Its

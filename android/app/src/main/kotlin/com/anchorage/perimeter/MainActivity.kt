@@ -9,18 +9,34 @@ import com.anchorage.perimeter.presentation.navigation.AnchorageNavHost
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
- * The single Activity.
+ * The one and only Activity.
  *
- * Anchorage is a one-Activity, Compose-navigation app: there is no fragment
- * layer and no per-screen Activity, so the only platform lifecycle that
- * matters is this one. That keeps the location stream's lifetime easy to
- * reason about - it is bounded by the ViewModel, which is bounded by the
- * navigation back stack entry.
+ * Anchorage is a single-Activity, Compose-navigation app: no fragments, no
+ * per-screen Activity. So the only platform lifecycle that matters is this
+ * one.
+ *
+ * That simplification is what keeps the location stream's lifetime easy to
+ * reason about. The GPS runs only while the attendance screen is both
+ * permitted and visible, and "visible" is bounded by this Activity's
+ * lifecycle, through the ViewModel, through the navigation back stack entry.
+ * With three Activities and a fragment layer, that chain would be much harder
+ * to hold in your head — and the battery bug much easier to write.
+ *
+ * ## The whole startup sequence
+ *
+ * ```
+ * AnchorageApplication  (builds the Hilt graph)
+ *   └─ MainActivity     (this file)
+ *        └─ AnchorageTheme      (colours, type, shapes)
+ *             └─ AnchorageNavHost  (routes between the three screens)
+ * ```
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Draw behind the status and navigation bars. Called before
+        // super.onCreate so the window is configured before the first frame.
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 

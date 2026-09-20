@@ -23,16 +23,36 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 /**
- * Assembles the domain.
+ * **Assembles the domain.** This module knows how to build every use case.
  *
- * The use cases have no framework annotations of their own - they are plain
- * constructor-injected Kotlin classes that a test can `new` in one line. This
- * module is the single place that knows how to build them, which is what keeps
- * `:core:domain` free of any dependency on Hilt.
+ * ## Why the use cases need a module at all
  *
- * The policy objects ([GeofencePolicy], [AttendanceWindow]) are provided rather
- * than defaulted at each call site, so a future "office profile" feature can
- * make them per-tenant by changing this file alone.
+ * Look at any use case in `domain/usecase/`: it has **no framework
+ * annotations**. No `@Inject`, no `@Singleton`, nothing. They are plain
+ * Kotlin classes a test can construct in one line:
+ *
+ * ```kotlin
+ * val useCase = MarkAttendanceUseCase(fakeRepo, fakeAttendance, fakeTracker, ...)
+ * ```
+ *
+ * That purity is the point — it is what keeps the domain layer free of any
+ * dependency on Hilt, and what the architecture test enforces. The cost is
+ * that somebody has to tell Hilt how to build them, and this file is that
+ * somebody. One place, explicitly.
+ *
+ * ## Why the policies are provided rather than defaulted
+ *
+ * [GeofencePolicy] and [AttendanceWindow] both have perfectly good defaults,
+ * so every use case could just take them. They are provided here instead so
+ * that a future "office profile" feature — a per-tenant radius, a per-site
+ * check-in window — becomes a change to this file alone.
+ *
+ * ## Singleton or not?
+ *
+ * The policies, the distance calculator and the evaluator are `@Singleton`:
+ * they are stateless and immutable, so one instance is enough. The use cases
+ * are **not**, because they are cheap to build and holding one alive longer
+ * than its caller buys nothing.
  */
 @Module
 @InstallIn(SingletonComponent::class)

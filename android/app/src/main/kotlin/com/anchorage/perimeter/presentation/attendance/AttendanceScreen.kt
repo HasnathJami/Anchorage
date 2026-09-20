@@ -78,12 +78,35 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Route-level composable: owns the ViewModel, the runtime-permission dance and
- * the effect plumbing, then hands a plain state object to [AttendanceContent].
+ * **The main screen** — the dial, the office card and the check-in button.
  *
- * Splitting the screen this way is what makes the visual layer previewable and
- * screenshot-testable: [AttendanceContent] has no Hilt, no permissions and no
- * coroutines - only data in, callbacks out.
+ * This file has two halves, and the split is the important part:
+ *
+ * - **[AttendanceRoute]** (this one) owns the messy platform work: the
+ *   ViewModel, the runtime-permission dance, the lifecycle observer and the
+ *   effect plumbing.
+ * - **[AttendanceContent]** below is *pure*. Data in, callbacks out. No Hilt,
+ *   no permissions, no coroutines.
+ *
+ * That is what makes the visual layer previewable and screenshot-testable —
+ * the three `@Preview`s at the bottom of this file render real states with no
+ * device, no GPS and no dependency injection.
+ *
+ * ## The lifecycle block is load-bearing
+ *
+ * The `repeatOnLifecycle` block below does two jobs at once. On the way in it
+ * reports the current permission state, which is what lets the screen recover
+ * silently when a user grants permission in Settings and swipes back. On the
+ * way *out* — in its `finally` — it tells the ViewModel the screen has gone,
+ * and that is the **only** signal that stops the GPS. Read the comment there
+ * before changing it.
+ *
+ * @param onExitApp Called once the user confirms leaving. Attendance is the
+ *   start destination, so back from here means shutting the app down.
+ * @param onOpenHistory Navigate to the attendance log.
+ * @param onPickOffice Navigate to the map picker.
+ * @param modifier Standard Compose modifier.
+ * @param viewModel Supplied by Hilt; overridable in tests.
  */
 @Composable
 fun AttendanceRoute(
@@ -202,11 +225,22 @@ fun AttendanceRoute(
 }
 
 /**
- * The stateless screen body.
+ * The stateless screen body — everything you can see, and nothing that moves.
+ *
+ * Takes state and callbacks only, which is what lets the previews at the
+ * bottom of this file render it in any state without a device.
  *
  * The vertical rhythm here is a direct transcription of the reference design:
- * a white app bar, then the office card, then the proximity read-out, then the
- * dashed check-in panel, over a soft mint gradient.
+ * a white app bar, then the office card, then the proximity read-out, then
+ * the dashed check-in panel, over a soft mint gradient.
+ *
+ * @param state Everything the screen should show right now.
+ * @param onIntent Where every tap goes. The screen's only way to talk back.
+ * @param onOpenHistory Navigate to the log.
+ * @param onPickOffice Navigate to the map picker.
+ * @param onBack The app bar's arrow. Same intent as the system back gesture.
+ * @param snackbarHostState Host for the one-shot messages.
+ * @param modifier Standard Compose modifier.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -324,12 +358,16 @@ fun AttendanceContent(
  * "Leave Anchorage?"
  *
  * The confirmation exists because this screen is the app's front door: back
- * from here is not a navigation step, it is a shutdown, and an accidental edge
- * swipe should not cost the user a location fix they have been waiting on.
+ * from here is not a navigation step, it is a shutdown, and an accidental
+ * edge swipe should not cost the user a location fix they have been waiting
+ * on.
  *
- * Dismissing is the default action - it is the safe one, it is what the
+ * Dismissing is the default action — it is the safe one, it is what the
  * outside-tap and a second back press both do, and the destructive choice is
  * never the one a stray tap lands on.
+ *
+ * @param onConfirm Leave the app.
+ * @param onDismiss Stay. Also what an outside tap and the back gesture do.
  */
 @Composable
 private fun ExitConfirmationDialog(

@@ -12,6 +12,16 @@ import 'package:anchorage_harbor/presentation/sync/pages/upload_manager_page.dar
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+// ── THE APP WIDGET ───────────────────────────────────────────────────────
+//
+// Theme, and the Bloc that is hoisted ABOVE the navigator.
+//
+// That hoisting is the important part. UploadManagerBloc lives here rather
+// than on the Upload Manager screen, so the sync engine keeps working while
+// the user is on the camera. It is also why UploadManagerOpened exists as a
+// separate event from UploadManagerStarted - the Bloc starts once, but the
+// screen opens many times.
+
 /// Route names, in one place so a typo is caught at the call site.
 abstract final class HarborRoutes {
   static const String camera = '/';

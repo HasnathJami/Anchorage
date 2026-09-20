@@ -1,5 +1,23 @@
 import 'package:equatable/equatable.dart';
 
+// ── PREVIEW CROP ─────────────────────────────────────────────────────────
+//
+// The maths that makes tap-to-focus land where the user actually touched.
+//
+// THE PROBLEM: the camera preview is painted to COVER the screen, so the
+// sensor's image is bigger than the viewport and part of it is off-glass. On
+// a 3:4 preview over a 9:20 phone screen, about 40% of the sensor's width is
+// not visible at all.
+//
+// Passing raw viewport coordinates to setFocusPoint therefore focused
+// somewhere the user never touched. This class maps BOTH WAYS:
+//
+//   screen tap  ──► sensor coordinate   (so the right thing is metered)
+//   sensor point ──► screen position    (so the reticle lands under the finger)
+//
+// Pure arithmetic, no Flutter, no plugin - so it is unit-tested against every
+// aspect-ratio combination rather than eyeballed on one phone.
+
 /// Where a tap on the *visible* preview lands on the *sensor* image.
 ///
 /// These are not the same point, and assuming they were is why tap-to-focus

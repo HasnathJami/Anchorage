@@ -2,6 +2,21 @@ package com.anchorage.perimeter.core.designsystem.theme
 
 import androidx.compose.ui.graphics.Color
 
+/*
+ * ── COLOUR ───────────────────────────────────────────────────────────────
+ *
+ * Two halves, and the split matters:
+ *
+ *   1. The raw palette, private to this file. Sampled directly from the
+ *      reference screenshots in `design/`, which is why the values are odd
+ *      numbers (#2B6EEA, not a round #2563EB).
+ *   2. `AnchorageColors` - the semantic roles screens actually use.
+ *
+ * Nothing outside this file may name a pigment. If you need a new colour,
+ * add a *role*, so that a re-skin, or a future dark theme, stays a
+ * single-file change.
+ */
+
 /**
  * The Anchorage palette.
  *

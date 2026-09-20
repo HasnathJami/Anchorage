@@ -1,5 +1,16 @@
 import 'package:equatable/equatable.dart';
 
+// ── THE ZOOM LADDER ──────────────────────────────────────────────────────
+//
+// The quick-zoom buttons under the shutter: 0.5x / 1x / 2x.
+//
+// THE RULE THAT MATTERS: these are built from the SENSOR'S ZOOM RANGE, never
+// from the number of back cameras.
+//
+// availableCameras() reports *logical* cameras. A three-lens phone publishes
+// ONE rear camera spanning all three, so counting cameras collapsed this row
+// to nothing on nearly every modern device. Do not reintroduce a lens count.
+
 /// One of the round quick-zoom buttons under the preview - `0.5`, `1`, `2`.
 ///
 /// A stop is a *zoom ratio*, not a camera. That distinction is the whole point

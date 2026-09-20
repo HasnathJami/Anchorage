@@ -2,6 +2,15 @@ import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_range.dart';
 import 'package:equatable/equatable.dart';
 
+// ── THE ZOOM SPAN ────────────────────────────────────────────────────────
+//
+// Which zoom stops to show, built around the camera that is CURRENTLY OPEN.
+//
+// `ZoomSpan.across` deliberately puts the active lens into the bands even
+// when the supplied list does not contain it. The list is the REAR ladder;
+// without this the front camera borrowed it, and a pinch on a selfie
+// resolved to the rear ultra-wide and opened it.
+
 /// Which camera to have open, and what to set *its* zoom to, in order to
 /// deliver the zoom the user asked for.
 typedef ZoomPlacement = ({CameraLens lens, double sensorZoom});

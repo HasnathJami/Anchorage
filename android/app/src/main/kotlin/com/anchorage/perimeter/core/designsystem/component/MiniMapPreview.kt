@@ -33,6 +33,23 @@ import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
 import kotlin.math.abs
 import kotlin.random.Random
 
+/*
+ * ── THE MAP THUMBNAIL ────────────────────────────────────────────────────
+ *
+ * A small map-like picture on the office card, drawn from scratch rather
+ * than fetched.
+ *
+ * A real MapView would mean a Maps API key, a billed dependency, a network
+ * round-trip and a second permission surface - for what is decoration on a
+ * card. So the tile is *generated* from the anchor's own coordinates: the
+ * same office always renders the same street pattern, and two different
+ * offices look visibly different, which preserves the "this is your saved
+ * place" signal the reference design intends.
+ *
+ * Everything is drawn in normalised units and scaled at draw time, so it is
+ * resolution-independent and costs exactly one Canvas pass.
+ */
+
 /**
  * A procedurally drawn map thumbnail.
  *

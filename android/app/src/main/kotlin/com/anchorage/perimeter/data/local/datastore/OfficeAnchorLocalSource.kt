@@ -20,24 +20,43 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Reads and writes the single office anchor to Proto-less DataStore.
+ * Reads and writes the one saved office to DataStore.
  *
- * DataStore rather than SharedPreferences because the anchor is read as a
- * *stream*: the Attendance screen must react the instant a new office is
- * captured, and `SharedPreferences.OnSharedPreferenceChangeListener` is a
- * callback-and-leak API by comparison. DataStore also gives transactional
- * writes, so a crash mid-save can never leave a latitude without its longitude.
+ * The anchor is stored as six loose key/value pairs rather than one blob,
+ * because DataStore Preferences has no object support. [toAnchorOrNull]
+ * reassembles them.
  *
- * Note the [catch] on the read path: DataStore signals a corrupt or unreadable
- * file with an `IOException` *inside the flow*. Left unhandled it would
- * propagate to the UI collector and kill the screen; here it becomes a typed
- * [AppError.Storage] value the screen can render as a banner.
+ * ## Why DataStore rather than SharedPreferences
+ *
+ * Two reasons, both load-bearing:
+ *
+ * 1. **The anchor is read as a stream.** The attendance screen must react the
+ *    instant a new office is captured. DataStore exposes a [Flow] natively;
+ *    `SharedPreferences.OnSharedPreferenceChangeListener` is a
+ *    callback-and-leak API by comparison.
+ * 2. **Writes are transactional.** A crash halfway through a save can never
+ *    leave a latitude without its longitude.
+ *
+ * ## The catch on the read path
+ *
+ * DataStore signals a corrupt or unreadable file with an `IOException`
+ * *inside the flow*. Left unhandled it would propagate to the UI collector
+ * and kill the screen. Here it becomes a typed [AppError.Storage] value the
+ * screen can render as a banner.
+ *
+ * @param dataStore The preferences store, supplied by Hilt.
  */
 @Singleton
 class OfficeAnchorLocalSource @Inject constructor(
     private val dataStore: DataStore<Preferences>,
 ) {
 
+    /**
+     * The saved office, re-emitted on every change.
+     *
+     * @return `Success(null)` when nothing has been saved yet — a normal
+     *   state, not a failure.
+     */
     fun observe(): Flow<Outcome<OfficeAnchor?>> = dataStore.data
         .map { preferences -> Outcome.Success(preferences.toAnchorOrNull()) as Outcome<OfficeAnchor?> }
         .catch { throwable ->
@@ -54,6 +73,11 @@ class OfficeAnchorLocalSource @Inject constructor(
             )
         }
 
+    /**
+     * Writes all six fields in one transaction.
+     *
+     * @param anchor The office to save. Replaces any previous one.
+     */
     suspend fun save(anchor: OfficeAnchor): Outcome<Unit> = runStorage(write = true) {
         dataStore.edit { preferences ->
             preferences[KEY_LATITUDE] = anchor.point.latitude
@@ -65,6 +89,7 @@ class OfficeAnchorLocalSource @Inject constructor(
         }
     }
 
+    /** Removes all six keys, returning the app to its "no office" state. */
     suspend fun clear(): Outcome<Unit> = runStorage(write = true) {
         dataStore.edit { preferences ->
             preferences.remove(KEY_LATITUDE)
@@ -77,9 +102,14 @@ class OfficeAnchorLocalSource @Inject constructor(
     }
 
     /**
-     * Returns `null` unless *every* field is present. A partially written
-     * anchor is treated as no anchor at all rather than as a coordinate with
-     * silent zeroes standing in for the missing halves.
+     * Reassembles the six stored keys into an [OfficeAnchor].
+     *
+     * **All-or-nothing.** Returns `null` unless *every* required field is
+     * present. A partially written anchor is treated as no anchor at all,
+     * rather than as a coordinate with silent zeroes standing in for the
+     * missing halves — which would put the office in the Gulf of Guinea.
+     *
+     * @return The anchor, or `null` if nothing usable is stored.
      */
     private fun Preferences.toAnchorOrNull(): OfficeAnchor? {
         val latitude = this[KEY_LATITUDE] ?: return null
@@ -103,6 +133,14 @@ class OfficeAnchorLocalSource @Inject constructor(
         }.getOrNull() // Out-of-range persisted values degrade to "not configured".
     }
 
+    /**
+     * Runs a DataStore operation and converts an `IOException` into the right
+     * typed failure.
+     *
+     * @param write `true` for saves, `false` for reads. Only affects which
+     *   error is reported, so the message can name the right remedy.
+     * @param block The DataStore call to perform.
+     */
     private inline fun runStorage(write: Boolean, block: () -> Unit): Outcome<Unit> = try {
         block()
         Outcome.Success(Unit)
@@ -112,6 +150,10 @@ class OfficeAnchorLocalSource @Inject constructor(
         )
     }
 
+    /**
+     * The storage keys. Changing any of these string values would orphan
+     * every already-saved office, so they are treated as a wire format.
+     */
     private companion object {
         val KEY_LATITUDE = doublePreferencesKey("office_latitude")
         val KEY_LONGITUDE = doublePreferencesKey("office_longitude")

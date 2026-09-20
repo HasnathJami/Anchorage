@@ -27,20 +27,51 @@ import androidx.compose.material3.Text
 import com.anchorage.perimeter.core.designsystem.theme.AnchorageTheme
 
 /**
- * The proximity dial: a ring whose sweep is how far the user is through the
- * geofence radius, with the live distance at its centre.
+ * **The big circle on the attendance screen.** A ring whose sweep shows how
+ * far through the geofence radius the user is, with the live distance printed
+ * at its centre.
  *
- * Design notes:
+ * ```
+ *        ╭───────────╮
+ *      ╭─┤   120m    ├─╮     ← valueLabel
+ *      │ │   AWAY    │ │     ← captionLabel
+ *      ╰─┴───────────┴─╯
+ *      ▲ arc sweeps clockwise from 12 o'clock as distance grows
+ * ```
  *
- *  * The arc starts at 12 o'clock (`-90` degrees) and sweeps clockwise, so
- *    "more arc" reads unambiguously as "further away".
- *  * Progress and colour are both animated. Raw GPS jitters by a few metres a
- *    second; without the 450 ms tween the ring visibly twitches and the screen
- *    feels broken even when the data is fine.
- *  * A minimum sweep of 2 degrees is enforced so that standing exactly on the
- *    anchor still renders a visible tick rather than a bare track.
- *  * The whole dial exposes a single [semantics] description, because a screen
- *    reader announcing "120" and "AWAY" as two unrelated nodes is useless.
+ * ## Design notes
+ *
+ * - The arc starts at 12 o'clock (`-90` degrees) and sweeps clockwise, so
+ *   "more arc" reads unambiguously as "further away".
+ * - **Progress and colour are both animated.** Raw GPS jitters by a few
+ *   metres a second; without the 450 ms tween the ring visibly twitches and
+ *   the screen feels broken even when the data is fine.
+ * - A minimum sweep of 2 degrees is enforced, so standing exactly on the
+ *   anchor still renders a visible tick rather than a bare track.
+ * - **The whole dial is one semantic node.** A screen reader announcing
+ *   "120" and "AWAY" as two unrelated items is useless, so the caller passes
+ *   one complete [contentDescription] instead.
+ *
+ * ## A note for whoever animates this next
+ *
+ * The *value* is animated and then formatted — never the other way round.
+ * Animating a formatted string is what made the ring glide smoothly while the
+ * read-out flickered 120 – 118 – 121 underneath it. See `ProximityReadout`,
+ * which owns that animation and passes the finished text in here.
+ *
+ * @param valueLabel The big number, already formatted — "120m", "1.4 km".
+ * @param captionLabel The small word beneath it, normally "AWAY".
+ * @param progress How full the arc should be: `0f` at the anchor, `1f` at or
+ *   beyond the fence edge. Clamped internally, so out-of-range is safe.
+ * @param arcColor The ring colour, carrying the in-range / out-of-range
+ *   status. Animated when it changes.
+ * @param fillColor A soft wash inside the ring that carries the same status
+ *   colour into the middle without competing with the numeral.
+ * @param contentDescription The complete sentence a screen reader announces.
+ *   Must be the *real* number, not the tween's current frame.
+ * @param modifier Standard Compose modifier.
+ * @param diameter Outer size of the dial.
+ * @param strokeWidth Thickness of the ring.
  */
 @Composable
 fun DistanceDial(

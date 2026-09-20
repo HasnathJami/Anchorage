@@ -41,21 +41,44 @@ import kotlin.math.log2
 import kotlin.math.roundToInt
 
 /**
- * The slippy map: tiles, the dropped centre pin, and the user's own position.
+ * **The map itself** — tiles, the dropped centre pin, the geofence circle and
+ * the user's own position, all drawn onto one Compose `Canvas`.
  *
- * All of the projection arithmetic lives in [WebMercator] rather than here, so
- * the part that is easy to get subtly wrong is covered by JVM tests while this
- * file stays a drawing routine.
+ * ## The division of labour
  *
- * **Tiles are drawn [TILE_DISPLAY_DP] wide, not 256 device pixels.** A raster
- * tile blitted 1:1 onto a 3x-density screen is a postage stamp with unreadable
- * street names. Fixing the tile's *dp* size instead makes the map render at a
- * consistent physical scale on every device, which is why every world-pixel
- * measurement below is multiplied through [pixelScale].
+ * All of the projection arithmetic lives in
+ * [com.anchorage.perimeter.domain.geo.WebMercator] rather than here. The part
+ * that is easy to get subtly wrong is therefore covered by JVM tests, and
+ * this file stays a drawing routine you can read top to bottom.
  *
- * **Nothing here can throw on bad input.** A tile whose bytes fail to decode
- * is skipped and the grid shows through: corrupt imagery must not be able to
- * take down a screen the user is standing outside trying to use.
+ * ## Tiles are drawn [TILE_DISPLAY_DP] wide, not 256 device pixels
+ *
+ * A raster tile blitted 1:1 onto a 3x-density screen is a postage stamp with
+ * unreadable street names. Fixing the tile's *dp* size instead makes the map
+ * render at a consistent physical scale on every device — which is why every
+ * world-pixel measurement below is multiplied through `pixelScale`.
+ *
+ * ## Nothing here can throw on bad input
+ *
+ * A tile whose bytes fail to decode is skipped and the grid shows through.
+ * Corrupt imagery must not be able to take down a screen the user is standing
+ * outside trying to use.
+ *
+ * @param centre The coordinate at the middle of the viewport — and therefore
+ *   under the pin, and therefore the candidate office.
+ * @param zoom Current zoom level.
+ * @param tiles Already-downloaded tile images, keyed by coordinate.
+ * @param userLocation The user's real position, drawn as a blue dot. Null
+ *   until a fix arrives.
+ * @param userAccuracyMeters Error radius around [userLocation], drawn as a
+ *   translucent halo so the dot does not claim more precision than it has.
+ * @param radiusMeters The geofence size, drawn as a circle around the pin so
+ *   the user can see what they are committing to.
+ * @param onCentreChanged Called as the map is panned, with the new
+ *   coordinate under the pin.
+ * @param onTilesRequested Called when the viewport needs images it does not
+ *   have. The canvas computes this because only it knows its pixel size.
+ * @param modifier Standard Compose modifier.
  */
 @Composable
 fun MapCanvas(

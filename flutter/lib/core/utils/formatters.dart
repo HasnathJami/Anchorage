@@ -1,5 +1,16 @@
 import 'dart:math';
 
+// ── FORMATTERS ───────────────────────────────────────────────────────────
+//
+// Numbers and dates into the text the user reads: "2.4 MB", "12 MB/s",
+// "2 min ago".
+//
+// ALSO HOME TO thumbnailCacheWidth(), WHICH IS NOT COSMETIC. A 12 MP camera
+// JPEG decodes to roughly 48 MB of bitmap regardless of the size it is
+// painted at. The Upload Manager draws one per row; a dozen rows without a
+// cacheWidth was half a gigabyte of thumbnails - an OOM kill on a mid-range
+// phone. Every Image.file in this app must pass through it.
+
 /// Presentation-only formatting, kept out of both the Bloc (so state stays
 /// numeric and testable) and the widgets (so the rules are asserted once).
 abstract final class Formatters {

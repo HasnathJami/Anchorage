@@ -20,12 +20,23 @@ import com.anchorage.perimeter.presentation.attendance.AttendanceNotice
 import com.anchorage.perimeter.R
 
 /**
- * Renders an [AttendanceNotice] as a banner with a matching remedy.
+ * Renders an [AttendanceNotice] as a banner, with the remedy that matches it.
  *
- * Every branch supplies its own icon, tone and action verb. The `when` is
- * exhaustive over a sealed type, so adding a new failure mode to the domain
- * will not compile until someone has decided how to explain it to a user -
- * which is exactly the pressure you want on that decision.
+ * ## The exhaustive `when` is the point
+ *
+ * Every branch supplies its own icon, tone and action verb. Because the
+ * `when` is exhaustive over a sealed type, adding a new failure mode to the
+ * domain **will not compile** until someone has decided how to explain it to
+ * a user — which is exactly the pressure you want on that decision.
+ *
+ * This is the payoff for modelling errors as a sealed hierarchy rather than
+ * as strings. See [com.anchorage.perimeter.core.common.error.AppError].
+ *
+ * @param notice Which condition to explain.
+ * @param onAction The banner's button. What it does depends on the notice —
+ *   open Settings, retry, re-capture the office.
+ * @param onDismiss The banner's close button.
+ * @param modifier Standard Compose modifier.
  */
 @Composable
 fun NoticeBanner(

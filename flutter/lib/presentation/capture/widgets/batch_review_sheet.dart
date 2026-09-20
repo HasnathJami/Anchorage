@@ -7,6 +7,14 @@ import 'package:anchorage_harbor/presentation/capture/bloc/camera_bloc.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+// ── THE BATCH REVIEW SHEET ───────────────────────────────────────────────
+//
+// What was just shot, before it is handed to the upload queue: a thumbnail
+// per photograph, each discardable, and one submit button.
+//
+// Every Image.file here carries a cacheWidth - see the note in
+// upload_widgets.dart for why that is not optional.
+
 /// Review the batch that has not been handed over yet.
 ///
 /// This sheet exists because of the moment it protects. A field operator

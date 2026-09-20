@@ -1,6 +1,16 @@
 import 'package:anchorage_harbor/core/designsystem/harbor_theme.dart';
 import 'package:flutter/material.dart';
 
+// ── THE EXIT CONFIRMATION ────────────────────────────────────────────────
+//
+// "Close Anchorage Harbor?" - and, when the batch is unsent, a warning that
+// says so.
+//
+// The camera is the root route, so the X button and the back gesture are the
+// same intent and get the same answer. Routing only one of them through a
+// confirmation is how "are you sure?" becomes a dialog users learn to route
+// around.
+
 /// What the user chose in [ExitConfirmationDialog].
 enum ExitIntent {
   /// Stay in the app.

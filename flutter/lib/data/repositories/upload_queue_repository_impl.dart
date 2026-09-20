@@ -8,6 +8,24 @@ import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:anchorage_harbor/domain/repositories/upload_queue_repository.dart';
 import 'package:sqflite/sqflite.dart';
 
+// ── THE QUEUE, ON DISK ───────────────────────────────────────────────────
+//
+// Implements UploadQueueRepository over SQLite. This is where "durable"
+// actually happens: a photograph is a row here from the moment the shutter
+// closes until the server acknowledges it.
+//
+// TWO THINGS TO KNOW BEFORE EDITING:
+//
+// 1. CHANGE NOTIFICATION IS EXPLICIT. `sqflite` has no reactive queries, so
+//    every write calls _notify(), which re-reads and pushes to a broadcast
+//    stream. Honest and cheap for a queue of tens of items, and it keeps
+//    "who republishes?" answerable by reading one file - unlike a trigger
+//    scheme that works until someone adds a write path and forgets to fire it.
+//    ADD A WRITE PATH, ADD THE _notify().
+//
+// 2. THIS CLASS NEVER THROWS. Every method funnels through guard(), which
+//    converts any escaped exception into a typed Failure.
+
 /// SQLite-backed durable queue.
 ///
 /// `sqflite` has no reactive query support, so change notification is explicit:

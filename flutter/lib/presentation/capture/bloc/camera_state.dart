@@ -8,6 +8,19 @@ import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:anchorage_harbor/domain/services/camera_port.dart';
 import 'package:equatable/equatable.dart';
 
+// ── WHAT THE CAMERA SCREEN CAN SHOW ──────────────────────────────────────
+//
+// One immutable object holding the entire camera screen: which lens is open,
+// the zoom, the flash mode, the metering reticle, the shots taken so far.
+//
+// Note `previewKey`. It changes whenever the controller is replaced, which is
+// what forces the preview widget to rebuild against the NEW controller rather
+// than a disposed one - the difference between a live preview and a frozen
+// last frame after a lens switch.
+//
+// `copyWith` carries explicit `clear*` flags for the nullable fields, because
+// `null` cannot mean both "leave it alone" and "wipe it".
+
 /// Where the camera screen is in its lifecycle.
 enum CameraPhase {
   /// Nothing has been asked for yet.

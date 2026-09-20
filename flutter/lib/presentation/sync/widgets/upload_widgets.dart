@@ -7,6 +7,25 @@ import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:flutter/material.dart';
 
+// ── UPLOAD ROW WIDGETS ───────────────────────────────────────────────────
+//
+// The pieces the Upload Manager is built from: the progress header, one
+// queue row, the status chips and the action buttons.
+//
+// TWO RULES ENFORCED BY TESTS:
+//
+// 1. EVERY Image.file CARRIES A cacheWidth. These are camera captures. A
+//    12 MP JPEG is ~48 MB of bitmap once decoded, whether it is painted
+//    full-screen or into a 54 dp square - and this screen draws one per row.
+//    A dozen rows was half a gigabyte of thumbnails: an OOM kill on a
+//    mid-range phone, and constant decode-and-evict churn on a good one.
+//    NEVER ADD AN Image.file WITHOUT ONE. Use thumbnailCacheWidth().
+//
+// 2. EVERY TEXT ROW BESIDE A FIXED CONTROL IS Flexible WITH AN ELLIPSIS.
+//    `PENDING UPLOADS (n)` / `CLEAR SYNCED` overflowed on every phone 360 dp
+//    or narrower. Eyebrow type carries +1.6 of letter tracking, so these are
+//    tighter than they look. Add a row, add it to device_matrix_test.dart.
+
 /// The "STABLE LINK" chip.
 ///
 /// Three states, not two. "Connected" and "usable" are different things on a

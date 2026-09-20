@@ -15,21 +15,40 @@ import 'package:anchorage_harbor/domain/usecases/sync_use_cases.dart';
 import 'package:get_it/get_it.dart';
 import 'package:uuid/uuid.dart';
 
+// ── THE COMPOSITION ROOT ─────────────────────────────────────────────────
+//
+// The one place that decides which real class stands behind each interface.
+// If you want to know what this app is actually made of, read this file.
+//
+//   asked for                  gets built as
+//   ──────────────────────────────────────────────────────────
+//   UploadQueueRepository  →   UploadQueueRepositoryImpl  (SQLite)
+//   UploaderPort           →   MockUploadApi              (or HttpUploadApi)
+//   ConnectivityPort       →   ConnectivityMonitor
+//   BackgroundSchedulerPort→   WorkManagerScheduler       (or a no-op)
+//   CameraPort             →   CameraPluginAdapter
+//
+// WRITTEN BY HAND, NOT GENERATED, on purpose. A generated container hides the
+// wiring order, and the wiring order is exactly where the interesting
+// decisions live: which transport is real, whether background scheduling is
+// on, how long a link must hold before it counts as stable. All of that
+// should be visible in one readable file to anyone auditing the app.
+//
+// EVERY BINDING IS AGAINST AN INTERFACE. That is what lets the whole sync
+// engine be tested with fakes, and what makes going live a ONE-LINE change -
+// see the "Transport" section below.
+//
+// `registerLazySingleton` means "build it the first time somebody asks, then
+// reuse it". Nothing here is constructed at startup, so none of it costs
+// launch time.
+
 /// The service locator.
 final GetIt getIt = GetIt.instance;
 
-/// Composition root.
+/// Builds the object graph. See the file banner above for the full picture.
 ///
-/// Written by hand rather than generated, on purpose. A generated container
-/// hides the wiring order, and the wiring order is precisely where the
-/// interesting decisions live here: which implementation stands behind
-/// [UploaderPort], whether background scheduling is real or a no-op, and how
-/// long a link must hold before it counts as stable. All of that should be
-/// visible in one readable file to anyone auditing the app.
-///
-/// Every binding is against an *interface*. That is what lets the entire sync
-/// engine be tested with fakes, and what makes swapping [MockUploadApi] for the
-/// real HTTP transport a single-line change.
+/// Call [configure] once at startup, before anything asks [getIt] for
+/// something.
 abstract final class Injector {
   static Future<void> configure({
     bool enableBackgroundScheduling = true,

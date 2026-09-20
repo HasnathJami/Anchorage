@@ -1,6 +1,14 @@
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 import 'package:equatable/equatable.dart';
 
+// ── BATCH PROGRESS ───────────────────────────────────────────────────────
+//
+// The aggregate header above the upload list: "4 of 12 uploaded".
+//
+// Derived from the rows in WatchUploadQueue rather than tracked separately,
+// which is what keeps the invariant "the header agrees with the rows" true
+// by construction instead of by vigilance.
+
 /// The aggregate read-out at the top of the Upload Manager.
 ///
 /// Computed from the queue rather than tracked separately, so it can never

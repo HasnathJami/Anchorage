@@ -1,5 +1,18 @@
 import 'package:equatable/equatable.dart';
 
+// ── THE ZOOM BAND ────────────────────────────────────────────────────────
+//
+// How far the camera may zoom: 0.5x to 8x, intersected with what the sensor
+// actually supports.
+//
+//   * The 8x CEILING is a product decision. Past it a phone is upscaling, and
+//     a 1-30x slider makes the useful band impossible to touch precisely.
+//   * The 0.5x FLOOR is the hardware's to grant - only a phone with an
+//     ultra-wide goes below 1.
+//
+// This class owns both. Nothing else in the app may read the plugin's raw
+// getMinZoomLevel / getMaxZoomLevel.
+
 /// The zoom band the camera screen *offers*, which is not the same thing as
 /// the band the sensor will *admit*.
 ///

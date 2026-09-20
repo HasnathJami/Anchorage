@@ -6,6 +6,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 
+/*
+ * ── TYPE ─────────────────────────────────────────────────────────────────
+ *
+ * Seven text styles, named after the job they do (`dialValue`, `eyebrow`)
+ * rather than after a generic Material rung (`titleMedium`).
+ *
+ * That naming is deliberate: it stops a developer reaching for a near-miss
+ * because the right rung "looks close enough", which is how a design erodes
+ * one screen at a time.
+ */
+
 /**
  * The Anchorage type scale.
  *

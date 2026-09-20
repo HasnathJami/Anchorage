@@ -164,12 +164,41 @@ are separate because one waits for *any* link and the other for a *better* one.
 `DateTime.now()`, `System.currentTimeMillis()`, `Dispatchers.IO` or `Random()` directly inside
 a rule.
 
-### 6. Comments explain *why*
+### 6. Documentation has three layers, and all three are required
 
-Never *what*. If a reader could have guessed it from the code, delete it. The existing
-comments justify Haversine over `Location.distanceBetween`, full jitter over plain backoff,
-`@Binds` over `@Provides`, a hand-built zoom slider over a rotated `Slider`, and reporting
-rather than blocking mock locations. Match that standard.
+This rule was **narrowed in September 2026**. It used to read "comments explain
+*why*, never *what*", and that produced a codebase whose every comment argued a
+decision to a reviewer who already knew the code — and which a new contributor
+could not read at all. Both are needed; they are different jobs.
+
+**Layer 1 — the file banner.** Every file opens with a short orientation block:
+what this file is, in plain words, and where it sits in the flow. Kotlin uses a
+KDoc on the first declaration; Dart uses a `//` banner after the imports
+(`// ── THE COMPOSITION ROOT ──…`). A reader who opens a file cold must not
+have to reverse-engineer its purpose.
+
+**Layer 2 — the contract.** Every public function documents its parameters and
+its return value, in plain language, saying what the thing *means* rather than
+restating its type. `@param timeoutMillis How long to wait before giving up`,
+not `@param timeoutMillis the timeout`. Non-obvious enum cases and data-class
+properties get the same treatment.
+
+**Layer 3 — the *why*, unchanged.** The existing rationale comments are the
+most valuable thing in this repository and must survive every refactor. They
+justify Haversine over `Location.distanceBetween`, full jitter over plain
+backoff, `@Binds` over `@Provides`, a hand-built zoom slider over a rotated
+`Slider`, and reporting rather than blocking mock locations. Match that
+standard, and keep naming the bug a rule prevents.
+
+**Long functions carry section markers.** Anything past about forty lines is
+divided into labelled steps (`// Step 3 - the verdict.`) or banner sections
+(`// ═══ LENS AND ZOOM ═══`). `CameraBloc` and `MarkAttendanceUseCase` are the
+templates.
+
+**What is still forbidden** is the noise this rule was originally written
+against: a comment that restates the line below it. `// increment the counter`
+above `counter++` was wrong before and is still wrong. The test is whether a
+newcomer learns something, not whether a line has a comment on it.
 
 ---
 

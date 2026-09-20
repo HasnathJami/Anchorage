@@ -2,6 +2,16 @@ import 'package:anchorage_harbor/domain/entities/camera_lens.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:equatable/equatable.dart';
 
+// ── WHAT THE USER CAN DO TO THE CAMERA ───────────────────────────────────
+//
+// Every event the camera screen can raise. Read this list and you know the
+// screen's complete input surface.
+//
+// The zoom events look repetitive and are not: a PINCH, a SLIDER DRAG and a
+// QUICK-ZOOM BUTTON have different lifetimes and need different concurrency
+// treatment, and CameraZoomHandoverRequested exists specifically so that
+// "open another camera" cannot be cancelled half way by the next pinch value.
+
 /// Everything the user (or the OS) can do to the camera screen.
 ///
 /// Lifecycle events are first-class members here rather than side channels:

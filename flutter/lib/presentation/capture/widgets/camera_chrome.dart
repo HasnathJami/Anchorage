@@ -7,6 +7,31 @@ import 'package:anchorage_harbor/domain/entities/exposure_range.dart';
 import 'package:anchorage_harbor/domain/entities/zoom_stop.dart';
 import 'package:flutter/material.dart';
 
+// ── CAMERA CHROME ────────────────────────────────────────────────────────
+//
+// Everything drawn OVER the preview: the top bar, the zoom ladder, the
+// vertical zoom slider, the shutter, the metering reticle.
+//
+// THE GOVERNING RULE OF THIS FILE: A CONTROL THE HARDWARE IGNORES IS NOT
+// DRAWN. No front camera, no flip button. No metering point, no reticle. No
+// zoom range, no slider. A button that does nothing when pressed is worse
+// than no button, because the user cannot tell a broken app from a limited
+// device.
+//
+// TWO DRAWING DETAILS WITH TESTS BEHIND THEM:
+//
+//   * The metering ring's Stack carries an EXPLICIT WIDTH. A Stack sizes
+//     itself from its NON-POSITIONED children, and the ring is positioned -
+//     so without it the 68 dp circle was clipped to the padlock and drew as
+//     two disconnected arcs.
+//   * The ring is CUT at twelve o'clock, as a CustomPaint arc with a gap, so
+//     the padlock sits IN the gap the way every platform camera app draws it.
+//     FocusReticle.lockGapSweep derives the gap from the glyph so the two
+//     cannot drift apart.
+//
+// THE VERTICAL ZOOM SLIDER IS HAND-BUILT. A rotated Material Slider inverts
+// its own gesture axis and cannot put labels inside the track.
+
 /// A circular, translucent control that floats over the live preview.
 ///
 /// Translucent rather than solid so the frame the user is composing stays

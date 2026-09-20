@@ -4,6 +4,18 @@ import 'package:anchorage_harbor/domain/entities/link_quality.dart';
 import 'package:anchorage_harbor/domain/services/sync_ports.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+// ── CONNECTIVITY ─────────────────────────────────────────────────────────
+//
+// Turns raw transport events into the LinkQuality the engine gates on.
+//
+// THE SETTLE WINDOW IS THE POINT. Android reports a link the instant a Wi-Fi
+// association completes - several seconds before it can actually carry
+// traffic. A naive `isConnected` listener therefore starts an upload straight
+// into a failure and burns an attempt.
+//
+// So a transport must hold CONTINUOUSLY for the settle window before it is
+// promoted from `unstable` to `stable`. Only `stable` lets the engine begin.
+
 /// Turns raw transport events into a trustworthy [LinkQuality].
 ///
 /// The problem this solves is specific and easy to get wrong. `connectivity_plus`

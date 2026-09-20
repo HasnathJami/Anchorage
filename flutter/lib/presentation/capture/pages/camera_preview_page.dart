@@ -16,6 +16,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+// ── THE CAMERA SCREEN ────────────────────────────────────────────────────
+//
+// The app's root route: a full-bleed preview with the chrome drawn over it.
+//
+// THIS FILE OWNS THE GESTURES, NOT THE RULES. A pinch, a tap, a drag are
+// translated into CameraBloc events here; every decision about what they mean
+// lives in the Bloc and the domain entities it uses.
+//
+// THE ONE PIECE OF REAL MATHS HERE IS THE TAP MAPPING. The preview is painted
+// to COVER, so a tap on screen and the point it names on the sensor are
+// different points - on a 3:4 preview over a 9:20 screen, 40% of the sensor's
+// width is off-glass. Both directions go through PreviewCrop: the tap out to
+// the sensor, and the reticle back in so it lands under the finger.
+//
+// CLOSING THE APP: the camera is the root route, so the X button and the back
+// gesture both mean "close the app", and both go through the confirmation -
+// which warns when the batch is unsent. It calls SystemNavigator.pop(), never
+// exit(0): an abrupt kill can leave a half-written SQLite transaction.
+
 /// `CameraPreviewScreen` from the brief.
 ///
 /// The layout is a transcription of the reference design, top to bottom:

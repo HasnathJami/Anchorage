@@ -25,11 +25,33 @@ import com.anchorage.perimeter.presentation.attendance.ProximityUi
 import com.anchorage.perimeter.R
 
 /**
- * The centrepiece: distance dial, status pill and the sentence that tells the
- * user what to do about it.
+ * **The centrepiece of the screen:** the distance dial, the status pill
+ * beneath it, and the one sentence telling the user what to do about it.
  *
- * All three read from the same [ProximityUi] value, so they can never disagree
- * - a green ring above a red pill is impossible by construction.
+ * ```
+ *          ( 120m )        ← DistanceDial
+ *           AWAY
+ *        [ OUT OF RANGE ]  ← StatusPill
+ *   "Move within 50 m to check in"   ← helperText
+ * ```
+ *
+ * ## Why all three read from one value
+ *
+ * Every one of them derives from the same [ProximityUi] on the state. A green
+ * ring above a red pill is therefore impossible by construction, rather than
+ * something a reviewer has to notice.
+ *
+ * ## The animation rule worth remembering
+ *
+ * The *number* is animated, then formatted — never the other way round. See
+ * the comment on `animatedMeters` below: animating a formatted string is what
+ * made the ring glide smoothly while the read-out flickered underneath it.
+ * The value a screen reader announces is the **real** one, not the frame the
+ * tween happens to be on.
+ *
+ * @param state Everything the read-out needs: the reading, the proximity
+ *   verdict, the fence size and whether today is already marked.
+ * @param modifier Standard Compose modifier.
  */
 @Composable
 fun ProximityReadout(

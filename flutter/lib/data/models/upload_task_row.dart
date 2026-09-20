@@ -1,6 +1,18 @@
 import 'package:anchorage_harbor/data/datasources/upload_queue_database.dart';
 import 'package:anchorage_harbor/domain/entities/upload_task.dart';
 
+// ── ROW MAPPING ──────────────────────────────────────────────────────────
+//
+// UploadTask (domain) <-> a SQLite row (a Map of columns).
+//
+// Kept as free functions in their own file so that neither the domain entity
+// nor the database knows about the other. Change the storage format here and
+// nothing above the data layer notices.
+//
+// Enums are stored by NAME, not by index. An index would silently repoint
+// every stored row the day someone inserts a case into the middle of
+// UploadStatus.
+
 /// Row <-> entity mapping.
 ///
 /// Enums are persisted by *name*, never by index. An index would silently
